@@ -27,6 +27,129 @@ LangQ = Query("en", min_length=2, max_length=5)
 LatQ = Query(28.6139, ge=-90, le=90)
 LonQ = Query(77.2090, ge=-180, le=180)
 TzQ = Query("Asia/Kolkata")
+TraditionQ = Query(
+    "all",
+    description=(
+        "Filter occurrences by lunar-month naming convention or region. "
+        "Direct values: 'all' (default), 'purnimanta', 'amanta'. "
+        "Direction aliases: 'north', 'south', 'east', 'west', 'central', "
+        "'northeast', 'northwest'. State aliases: 'bengal', 'odisha', "
+        "'maharashtra', 'gujarat', 'karnataka', 'tamil-nadu', 'kerala', "
+        "etc. Aliases resolve to the underlying tradition(s); festivals "
+        "tagged with either are returned. Comma-separate to union multiple "
+        "regions (e.g. 'north,west')."
+    ),
+)
+
+
+# Region / state -> list of tradition tags. North + Northeast + East follow
+# Purnimanta (lunar month ends at Purnima); South + West follow Amanta
+# (month ends at Amavasya). State entries listed explicitly so callers can
+# pass natural geographic names instead of memorizing the calendar convention.
+REGION_TRADITIONS: dict[str, list[str]] = {
+    "all":         [],
+    "any":         [],
+    "":            [],
+    "purnimanta":  ["purnimanta"],
+    "amanta":      ["amanta"],
+    # Devotional schools (currently only Janmashtami distinguishes these).
+    "smarta":      ["smarta"],
+    "vaishnava":   ["vaishnava"],
+    "iskcon":      ["vaishnava"],
+
+    # Cardinal directions
+    "north":     ["purnimanta"],
+    "northwest": ["purnimanta"],
+    "northeast": ["purnimanta"],
+    "east":      ["purnimanta"],
+    "central":   ["purnimanta"],
+    "south":     ["amanta"],
+    "west":      ["amanta"],
+    "southwest": ["amanta"],
+    "southeast": ["amanta"],
+
+    # Purnimanta states (North / East / parts of Central India)
+    "bengal":          ["purnimanta"],
+    "west-bengal":     ["purnimanta"],
+    "westbengal":      ["purnimanta"],
+    "odisha":          ["purnimanta"],
+    "orissa":          ["purnimanta"],
+    "assam":           ["purnimanta"],
+    "bihar":           ["purnimanta"],
+    "jharkhand":       ["purnimanta"],
+    "up":              ["purnimanta"],
+    "uttar-pradesh":   ["purnimanta"],
+    "uttarpradesh":    ["purnimanta"],
+    "uttarakhand":     ["purnimanta"],
+    "delhi":           ["purnimanta"],
+    "haryana":         ["purnimanta"],
+    "punjab":          ["purnimanta"],
+    "himachal":        ["purnimanta"],
+    "himachal-pradesh":["purnimanta"],
+    "jammu":           ["purnimanta"],
+    "kashmir":         ["purnimanta"],
+    "rajasthan":       ["purnimanta"],
+    "mp":              ["purnimanta"],
+    "madhya-pradesh":  ["purnimanta"],
+    "madhyapradesh":   ["purnimanta"],
+    "chhattisgarh":    ["purnimanta"],
+    "sikkim":          ["purnimanta"],
+    "manipur":         ["purnimanta"],
+    "tripura":         ["purnimanta"],
+    "meghalaya":       ["purnimanta"],
+    "nagaland":        ["purnimanta"],
+    "arunachal":       ["purnimanta"],
+    "mizoram":         ["purnimanta"],
+
+    # Amanta states (South / West India)
+    "maharashtra":    ["amanta"],
+    "gujarat":        ["amanta"],
+    "goa":            ["amanta"],
+    "karnataka":      ["amanta"],
+    "andhra":         ["amanta"],
+    "andhra-pradesh": ["amanta"],
+    "andhrapradesh":  ["amanta"],
+    "telangana":      ["amanta"],
+    "tamil-nadu":     ["amanta"],
+    "tamilnadu":      ["amanta"],
+    "tamilnadu-tn":   ["amanta"],
+    "kerala":         ["amanta"],
+}
+
+
+def _resolve_tradition_tags(value: str) -> list[str]:
+    """Resolve a tradition/region query value into a list of tradition tags.
+    Empty list means "no filter" (return all occurrences). Unknown values are
+    passed through verbatim so future tags work without code changes.
+    """
+    if not value:
+        return []
+    tags: list[str] = []
+    for part in value.split(","):
+        key = part.strip().lower().replace("_", "-")
+        if not key:
+            continue
+        resolved = REGION_TRADITIONS.get(key)
+        if resolved is None:
+            tags.append(key)
+        else:
+            tags.extend(resolved)
+    # Dedupe while preserving order
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in tags:
+        if t not in seen:
+            out.append(t)
+            seen.add(t)
+    return out
+
+
+def _filter_tradition(occ, tradition: str):
+    tags = _resolve_tradition_tags(tradition or "all")
+    if not tags:
+        return occ
+    tagset = set(tags)
+    return [o for o in occ if not o.traditions or tagset.intersection(o.traditions)]
 
 
 @router.get("")
@@ -35,6 +158,7 @@ def list_festivals(
     from_: Date | None = Query(None, alias="from"),
     to: Date | None = Query(None),
     type: str | None = Query(None),
+    tradition: str = TraditionQ,
     language: str = LangQ,
     lat: float = LatQ,
     lon: float = LonQ,
@@ -49,6 +173,7 @@ def list_festivals(
         to = from_.replace(day=last_day)
 
     occ = festivals_in_range(from_, to, language=language, lat=lat, lon=lon, tz=tz)
+    occ = _filter_tradition(occ, tradition)
     if type:
         occ = [o for o in occ if (o.type or "") == type]
     return [
@@ -59,6 +184,7 @@ def list_festivals(
             "weekday": o.date.strftime("%a"),
             "type": o.type,
             "auspiciousness": o.auspiciousness,
+            "traditions": list(o.traditions),
         }
         for o in occ
     ]
@@ -68,6 +194,7 @@ def list_festivals(
 def today_festivals(
     response: Response,
     date: Date | None = Query(None),
+    tradition: str = TraditionQ,
     language: str = LangQ,
     lat: float = LatQ,
     lon: float = LonQ,
@@ -76,8 +203,10 @@ def today_festivals(
     response.headers["Cache-Control"] = DEFAULT_CACHE_CONTROL
     today = date or datetime.now(ZoneInfo(tz)).date()
     occ = festivals_in_range(today, today, language=language, lat=lat, lon=lon, tz=tz)
+    occ = _filter_tradition(occ, tradition)
     return {"festivals": [
-        {"id": o.festival_id, "name": o.name, "type": o.type}
+        {"id": o.festival_id, "name": o.name, "type": o.type,
+         "traditions": list(o.traditions)}
         for o in occ
     ]}
 
@@ -87,6 +216,7 @@ def upcoming(
     response: Response,
     from_: Date | None = Query(None, alias="from"),
     window: Literal["7d", "30d", "90d"] = Query("30d"),
+    tradition: str = TraditionQ,
     language: str = LangQ,
     lat: float = LatQ,
     lon: float = LonQ,
@@ -97,6 +227,7 @@ def upcoming(
     days = {"7d": 7, "30d": 30, "90d": 90}[window]
     end = start + timedelta(days=days)
     occ = festivals_in_range(start, end, language=language, lat=lat, lon=lon, tz=tz)
+    occ = _filter_tradition(occ, tradition)
     return {"items": [
         {
             "date": o.date.isoformat(),
@@ -104,6 +235,7 @@ def upcoming(
             "id": o.festival_id,
             "name": o.name,
             "type": o.type,
+            "traditions": list(o.traditions),
         }
         for o in occ
     ]}
@@ -114,6 +246,7 @@ def calendar(
     response: Response,
     year: int = Query(..., ge=1900, le=2100),
     month: int = Query(..., ge=1, le=12),
+    tradition: str = TraditionQ,
     language: str = LangQ,
     lat: float = LatQ,
     lon: float = LonQ,
@@ -124,10 +257,12 @@ def calendar(
     start = Date(year, month, 1)
     end = Date(year, month, last)
     occ = festivals_in_range(start, end, language=language, lat=lat, lon=lon, tz=tz)
+    occ = _filter_tradition(occ, tradition)
     by_day: dict[int, list[dict]] = {}
     for o in occ:
         by_day.setdefault(o.date.day, []).append(
-            {"id": o.festival_id, "name": o.name, "type": o.type}
+            {"id": o.festival_id, "name": o.name, "type": o.type,
+             "traditions": list(o.traditions)}
         )
     return {
         "year": year, "month": month,
@@ -151,6 +286,7 @@ def festival_dates(
         True,
         description="Include child/variant festivals (e.g. Diwali → Dhanteras, Govardhan, Bhai Dooj).",
     ),
+    tradition: str = TraditionQ,
     language: str = LangQ,
     lat: float = LatQ,
     lon: float = LonQ,
@@ -188,6 +324,7 @@ def festival_dates(
     start = Date(year, 1, 1)
     end = Date(year, 12, 31)
     occ = festivals_in_range(start, end, language=language, lat=lat, lon=lon, tz=tz)
+    occ = _filter_tradition(occ, tradition)
     occ = [o for o in occ if o.festival_id in ids]
 
     grouped: dict[str, list[dict]] = {}
@@ -197,6 +334,7 @@ def festival_dates(
                 "date": o.date.isoformat(),
                 "weekday": o.date.strftime("%a"),
                 "name": o.name,
+                "traditions": list(o.traditions),
             }
         )
 
@@ -209,7 +347,7 @@ def festival_dates(
                 "id": fid,
                 "name": dates[0]["name"] if dates else fid,
                 "count": len(dates),
-                "dates": [{"date": d["date"], "weekday": d["weekday"]} for d in dates],
+                "dates": [{"date": d["date"], "weekday": d["weekday"], "traditions": d["traditions"]} for d in dates],
             }
             for fid, dates in sorted(grouped.items())
         ],

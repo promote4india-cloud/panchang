@@ -7,10 +7,11 @@ on demand.
 
 Supported rule types (matches implementation.md §5):
 
-  tithi              { paksha?, tithi }                       -- every occurrence in year
-  tithi_in_paksha    { paksha, tithi }                        -- alias of tithi w/ paksha required
-  tithi_in_masa      { masa, paksha, tithi }                  -- once a year exact (Purnimanta naming)
-  tithi_in_amanta_masa{ masa, paksha, tithi }                 -- Rath Yatra-class (Amanta naming)
+  tithi              { paksha?, tithi, pin?, dedup? }              -- every occurrence in year
+  tithi_in_paksha    { paksha, tithi, pin?, dedup? }               -- alias of tithi w/ paksha required
+  tithi_in_masa      { masa, paksha, tithi, pin?, dedup? }         -- once a year exact (Purnimanta naming)
+  tithi_in_amanta_masa{ masa, paksha, tithi, pin?, dedup? }        -- Rath Yatra-class (Amanta naming)
+  multi_tradition    { observances: [{tradition, rule_type, rule}] } -- wrap N sub-rules; emit per-tradition tagged occurrences
   tithi_in_adhik_masa{ paksha, tithi }                        -- Padmini / Parama (adhik years only)
   tithi_at_nishitha  { paksha, tithi, masa? }                 -- Shivratri-class: tithi at midnight
   tithi_at_madhyahna { paksha, tithi, masa? }                 -- Ganesh Chaturthi-class: tithi at midday
@@ -20,6 +21,29 @@ Supported rule types (matches implementation.md §5):
   solar_event        { event: "mesha_sankranti"|"makar_..." } -- sun sign ingress
   gregorian          { month, day }                           -- fixed civil date
   manual             { dates: ["2026-11-08", ...] }           -- escape hatch
+
+Optional fields on tithi-class rules:
+  pin   : reference moment for the tithi probe. One of
+          "sunrise" (default), "madhyahna", "aparahna" (alias of madhyahna),
+          "pradosha", "moonrise", "nishitha". Used by festivals whose
+          canonical observance day is decided by which day's *kala* the
+          tithi occupies. Example: Nag Panchami uses aparahna-vyapini.
+  dedup : tie-breaker when the (pinned) tithi touches the reference moment
+          on two consecutive days (vriddhi). "last" (default) keeps the
+          later day; "first" keeps the earlier. Some festivals (Nag Panchami,
+          Akshaya Tritiya) prefer the first day.
+  avoid_bhadra : when true, after resolving the date, if Bhadra (Vishti
+          karana, index 7) is active at the rule's pin moment, the
+          observance is pushed to the NEXT day. Used by Raksha Bandhan
+          and Holika Dahan -- both forbid performing the rite during Bhadra.
+
+Kshaya (lost) and vriddhi (gained) tithis are handled automatically:
+  * Vriddhi: tithi touches the pinned moment on two consecutive days; the
+    matcher emits both and `dedup` picks one.
+  * Kshaya: tithi does not touch the pinned moment on any day (it begins
+    and ends between two adjacent probes). The matcher detects this from
+    the (current, next) tithi-at-probe pair and emits the single day that
+    fully contains the kshaya tithi.
 
 Performance design
 ------------------
@@ -44,6 +68,7 @@ from zoneinfo import ZoneInfo
 from .cache import ttl_cache
 from .db import connect_ro
 from .panchang import (
+    compute_karana,
     MASA_NAMES,
     NAKSHATRA_NAMES,
     TITHI_NAMES,
@@ -52,6 +77,8 @@ from .panchang import (
     sun_longitude,
     to_julian_day,
 )
+import swisseph as swe
+from .panchang import _rise_or_set  # type: ignore[attr-defined]
 
 # ---------------------------------------------------------------------------
 # Lookups
@@ -125,6 +152,22 @@ class _DaySnap:
     # and Karva Chauth which are decided by chaturthi at moonrise.
     moonrise_tithi_in_paksha: int = 0
     moonrise_paksha: str = ""
+    # Tithi at the NEXT day's sunrise (i.e. compute_tithi at sunrise(D+1)).
+    # Stored as the global 1..30 index plus the paksha string so the matcher
+    # can detect kshaya tithis: a (paksha, tithi) that is entirely contained
+    # between this day's sunrise and the next, never touching either probe.
+    next_tithi_idx: int = 0
+    next_paksha: str = ""
+    next_tithi_in_paksha: int = 0
+    # Karana (half-tithi) at each pin moment. Karana 7 = Vishti = "Bhadra",
+    # an inauspicious half-tithi during which Raksha Bandhan and Holika
+    # Dahan must not be performed -- the `avoid_bhadra` rule field uses
+    # these to push observance to the next day when Bhadra is active.
+    karana_at_sunrise: int = 0
+    karana_at_madhyahna: int = 0
+    karana_at_aparahna: int = 0
+    karana_at_pradosha: int = 0
+    karana_at_nishitha: int = 0
 
 
 def _ref_jd(d: Date, tz: ZoneInfo) -> float:
@@ -138,18 +181,17 @@ def _ref_jd(d: Date, tz: ZoneInfo) -> float:
 def _year_snapshot(year: int, lat_q: float, lon_q: float, tz_name: str) -> list[_DaySnap]:
     """
     Build day-by-day panchang snapshot for the whole calendar year.
-    ~365 light-weight Swiss Ephemeris probes. Cached per (year, location, tz).
+    ~365 light-weight Swiss Ephemeris probes per kala, cached per
+    (year, location, tz). Location matters because we sample sunset (for
+    pradosha) and moonrise via Swiss Ephemeris rise/set, which depend on
+    geographic latitude/longitude.
 
     The masa column uses the Purnimanta convention: every day is labeled with
     the name of the lunar month it belongs to, where a lunar month X ends on
-    Purnima X. Concretely: masa(day) = (sun_rashi_at_next_purnima + 1) % 12.
+    Purnima X. Concretely: masa(day) = (sun_rashi_at_next_purnima + 1) % 12 + 1.
     This is what drikpanchang and most North-Indian almanacs publish, and is
     what services/festival_rules_seed.py was written against.
-
-    lat/lon are accepted but unused inside the calc (festival rules don't
-    need sunrise-precise resolution); they remain part of the cache key.
     """
-    _ = (lat_q, lon_q)
     tz = ZoneInfo(tz_name)
     snaps: list[_DaySnap] = []
     d = Date(year, 1, 1)
@@ -161,51 +203,137 @@ def _year_snapshot(year: int, lat_q: float, lon_q: float, tz_name: str) -> list[
     scan_end = end + pad
 
     utc = ZoneInfo("UTC")
-    raw: list[tuple[Date, int, int, str, int, int, int, str, int, str, int, str, int, str]] = []
-    # (date, tithi_idx, tithi_in_paksha, paksha, nakshatra_idx, sun_rashi_idx,
-    #  nishitha_tip, nishitha_paksha, madhyahna_tip, madhyahna_paksha,
-    #  pradosha_tip, pradosha_paksha, moonrise_tip, moonrise_paksha)
+    raw: list[dict] = []
+
+    def _probe_at_jd(jd: float) -> tuple[int, str]:
+        tt = compute_tithi(jd, utc)
+        return (tt.index if tt.index <= 15 else tt.index - 15, tt.paksha)
+
+    def _karana_at(jd: float) -> int:
+        try:
+            return compute_karana(jd, utc).index
+        except Exception:
+            return 0
 
     def _probe(d: Date, hours: float) -> tuple[int, str]:
         jd = to_julian_day(
             datetime.combine(d, datetime.min.time(), tzinfo=tz) + timedelta(hours=hours)
         )
-        tt = compute_tithi(jd, utc)
-        return (tt.index if tt.index <= 15 else tt.index - 15, tt.paksha)
+        return _probe_at_jd(jd)
 
     cur = scan_start
     while cur <= scan_end:
-        jd = _ref_jd(cur, tz)
+        jd_midnight = to_julian_day(
+            datetime.combine(cur, datetime.min.time(), tzinfo=tz)
+        )
+        # Real sunrise/sunset/moonrise via Swiss Ephemeris. All pins
+        # (sunrise reference, madhyahna, aparahna, pradosha, nishitha) are
+        # derived from the actual rise/set instants, not fixed clock-hour
+        # proxies. Pradosha kala spans the first three muhurtas (~2h 24m)
+        # after sunset; we probe ~45 min in, which falls inside the first
+        # muhurta and matches Drik's "pradosha-vyapini" rule.
+        sunrise_jd = _rise_or_set(jd_midnight, swe.SUN, lon_q, lat_q, "rise")
+        sunset_jd = _rise_or_set(jd_midnight, swe.SUN, lon_q, lat_q, "set")
+        next_sunrise_jd = _rise_or_set(jd_midnight + 1.0, swe.SUN, lon_q, lat_q, "rise")
+        moonrise_jd = _rise_or_set(jd_midnight, swe.MOON, lon_q, lat_q, "rise")
+        # Sunrise reference (used for tithi/nakshatra/rashi of the civil day).
+        # Real sunrise; falls back to 06:00 local if Swiss rise fails (polar).
+        if sunrise_jd is None:
+            jd = _ref_jd(cur, tz)
+        else:
+            jd = sunrise_jd
         t = compute_tithi(jd, utc)
         tip = t.index if t.index <= 15 else t.index - 15
         n = compute_nakshatra(jd, utc)
         rashi = int(sun_longitude(jd) // 30)
-        # Kala probes — each picks the tithi prevailing at a specific moment
-        # of the Hindu day. Local-clock times are good enough proxies for the
-        # canonical kalas at Indian latitudes year-round.
-        n_tip, n_p = _probe(cur + timedelta(days=1), 0.0)   # nishitha ≈ midnight
-        m_tip, m_p = _probe(cur, 12.0)                       # madhyahna ≈ 12:00
-        p_tip, p_p = _probe(cur, 18.0)                       # pradosha  ≈ 18:00
-        mr_tip, mr_p = _probe(cur, 21.0)                     # moonrise  ≈ 21:00
-        raw.append((
-            cur, t.index, tip, t.paksha, n.index, rashi,
-            n_tip, n_p, m_tip, m_p, p_tip, p_p, mr_tip, mr_p,
-        ))
+        # Fallback to fixed-hour proxies if rise/set fails (polar / extreme).
+        if sunset_jd is None:
+            pradosha_jd = to_julian_day(
+                datetime.combine(cur, datetime.min.time(), tzinfo=tz) + timedelta(hours=18.75)
+            )
+        else:
+            pradosha_jd = sunset_jd + (45.0 / (24.0 * 60.0))  # +45 min in JD
+        if sunset_jd is not None and next_sunrise_jd is not None:
+            nishitha_jd = (sunset_jd + next_sunrise_jd) / 2.0
+        else:
+            nishitha_jd = to_julian_day(
+                datetime.combine(cur + timedelta(days=1), datetime.min.time(), tzinfo=tz)
+            )
+        if moonrise_jd is None:
+            mr_jd = to_julian_day(
+                datetime.combine(cur, datetime.min.time(), tzinfo=tz) + timedelta(hours=21.0)
+            )
+        else:
+            mr_jd = moonrise_jd
+        # Madhyahna = true solar midday = midpoint of sunrise..sunset.
+        # Aparahna kala = 4th of 5 equal parts of dinamana (day length);
+        # by convention probe at sunrise + 0.6 * dinamana, the start of
+        # the aparahna part. Falls back to 12:00 / 15:00 local if rise/set
+        # unavailable.
+        if sunrise_jd is not None and sunset_jd is not None:
+            dinamana = sunset_jd - sunrise_jd
+            madhyahna_jd = sunrise_jd + dinamana / 2.0
+            aparahna_jd = sunrise_jd + dinamana * 0.6
+        else:
+            madhyahna_jd = to_julian_day(
+                datetime.combine(cur, datetime.min.time(), tzinfo=tz) + timedelta(hours=12.0)
+            )
+            aparahna_jd = to_julian_day(
+                datetime.combine(cur, datetime.min.time(), tzinfo=tz) + timedelta(hours=15.0)
+            )
+
+        n_tip, n_p = _probe_at_jd(nishitha_jd)
+        m_tip, m_p = _probe_at_jd(madhyahna_jd)
+        p_tip, p_p = _probe_at_jd(pradosha_jd)
+        mr_tip, mr_p = _probe_at_jd(mr_jd)
+        # Karana at each pin (used by `avoid_bhadra`).
+        k_sunrise = _karana_at(jd)
+        k_madhyahna = _karana_at(madhyahna_jd)
+        k_aparahna = _karana_at(aparahna_jd)
+        k_pradosha = _karana_at(pradosha_jd)
+        k_nishitha = _karana_at(nishitha_jd)
+        raw.append({
+            "date": cur, "ti": t.index, "tip": tip, "paksha": t.paksha,
+            "n_idx": n.index, "rashi": rashi,
+            "n_tip": n_tip, "n_p": n_p,
+            "m_tip": m_tip, "m_p": m_p,
+            "p_tip": p_tip, "p_p": p_p,
+            "mr_tip": mr_tip, "mr_p": mr_p,
+            "k_sunrise": k_sunrise, "k_madhyahna": k_madhyahna,
+            "k_aparahna": k_aparahna,
+            "k_pradosha": k_pradosha, "k_nishitha": k_nishitha,
+        })
         cur += timedelta(days=1)
 
-    # Purnima detection + masa naming (sun_rashi at purnima + 1, mod 12).
+    # Purnima detection. The MASA NAME is assigned later (after amavasya
+    # detection) because Drik names a Purnima by the *previous* Amavasya's
+    # sun-rashi — i.e. the Amanta-month convention — which agrees with the
+    # naive "sun-rashi-at-purnima + 1" rule MOST years but diverges when a
+    # purnima precedes its expected Sankranti (e.g. 2025 Ashwin Purnima
+    # Oct 6: sun still in Kanya, but Drik calls it Ashwin Purnima because
+    # the prior Amavasya — Sep 21 — also has sun in Kanya which gives
+    # Ashwin under the amanta rule).
     purnima_pos: list[int] = []
-    purnima_masa: dict[int, int] = {}  # index → masa_idx (1..12)
     for i, row in enumerate(raw):
-        _d, _ti, tip_i, paksha_i, _ni, rashi_i = row[:6]
+        tip_i, paksha_i = row["tip"], row["paksha"]
         if paksha_i == "Shukla" and tip_i == 15:
             # Dedupe: if a purnima crosses two adjacent days, keep the later
             if purnima_pos and i - purnima_pos[-1] <= 1:
                 purnima_pos[-1] = i
-                purnima_masa.pop(purnima_pos[-1], None)
             else:
                 purnima_pos.append(i)
-            purnima_masa[i] = (rashi_i + 1) % 12 + 1  # 1..12
+        else:
+            # Kshaya purnima: Shukla 14 → Krishna 1 with no Shukla 15
+            # sample. Treat the earlier (Shukla 14) day as containing the
+            # purnima moment, per the same Drik convention applied to
+            # kshaya amavasya above.
+            if (paksha_i == "Krishna" and tip_i == 1
+                    and i > 0
+                    and raw[i - 1]["paksha"] == "Shukla"
+                    and raw[i - 1]["tip"] == 14
+                    and (not purnima_pos or purnima_pos[-1] != i - 1)):
+                purnima_pos.append(i - 1)
+    purnima_masa: dict[int, int] = {}  # index → masa_idx (1..12), set below
 
     def _masa_for(i: int) -> int:
         # Find the next purnima index ≥ i.
@@ -233,7 +361,7 @@ def _year_snapshot(year: int, lat_q: float, lon_q: float, tz_name: str) -> list[
     amavasya_pos: list[int] = []
     amavasya_rashi: dict[int, int] = {}
     for i, row in enumerate(raw):
-        _d, _ti, tip_i, paksha_i, _ni, rashi_i = row[:6]
+        tip_i, paksha_i, rashi_i = row["tip"], row["paksha"], row["rashi"]
         if paksha_i == "Krishna" and tip_i == 15:
             if amavasya_pos and i - amavasya_pos[-1] <= 1:
                 old = amavasya_pos[-1]
@@ -242,6 +370,21 @@ def _year_snapshot(year: int, lat_q: float, lon_q: float, tz_name: str) -> list[
             else:
                 amavasya_pos.append(i)
             amavasya_rashi[i] = rashi_i
+        else:
+            # Kshaya amavasya detection: amavasya tithi can be so short it
+            # never appears at any sunrise (Krishna 14 → Shukla 1 transition
+            # without a Krishna 15 sample). In that case the amavasya
+            # moment fell entirely between two consecutive sunrises; per
+            # Drik convention the EARLIER day (the Krishna 14 sunrise day)
+            # is treated as containing the amavasya. Example: 2025-02-28
+            # India — sunrise tithi jumps from K-14 (Feb 27) to S-1 (Feb 28).
+            if (paksha_i == "Shukla" and tip_i == 1
+                    and i > 0
+                    and raw[i - 1]["paksha"] == "Krishna"
+                    and raw[i - 1]["tip"] == 14
+                    and (not amavasya_pos or amavasya_pos[-1] != i - 1)):
+                amavasya_pos.append(i - 1)
+                amavasya_rashi[i - 1] = raw[i - 1]["rashi"]
 
     adhik_ranges: list[tuple[int, int]] = []
     for j in range(1, len(amavasya_pos)):
@@ -249,23 +392,40 @@ def _year_snapshot(year: int, lat_q: float, lon_q: float, tz_name: str) -> list[
         if amavasya_rashi[a_prev] == amavasya_rashi[a_curr]:
             adhik_ranges.append((a_prev + 1, a_curr))
 
+    # Assign purnima_masa now that amavasya_rashi is known. Each Purnima is
+    # named by the sun's rashi at the PREVIOUS Amavasya (amanta convention):
+    #     masa = (prev_amavasya_rashi + 1) % 12 + 1   (1..12)
+    # This matches Drik universally:
+    #   • 2024 Apr 23 Chaitra Purnima (prev avs Apr 8 sun Meena 11 → 1)
+    #   • 2024 Aug 19 Shravana Purnima (prev avs Aug 4 sun Karka 3 → 5)
+    #   • 2024 Sep 18 Bhadrapada Purnima (prev avs Sep 2 sun Simha 4 → 6)
+    #   • 2025 Oct 6 Ashwin Purnima (prev avs Sep 21 sun Kanya 5 → 7)
+    # Degenerate fallback (no prior amavasya in scan window): use sun rashi
+    # at the purnima itself + 1 (only triggers at scan edges, which we pad
+    # by ±20 days so it should rarely matter).
+    for pi in purnima_pos:
+        prev_av_rashi = None
+        for ai in amavasya_pos:
+            if ai <= pi:
+                prev_av_rashi = amavasya_rashi[ai]
+            else:
+                break
+        if prev_av_rashi is None:
+            purnima_masa[pi] = raw[pi]["rashi"] + 1
+        else:
+            purnima_masa[pi] = (prev_av_rashi + 1) % 12 + 1
+
     def _is_adhik(i: int) -> bool:
         for a, b in adhik_ranges:
             if a <= i <= b:
                 return True
         return False
 
-    # Adhik-masa shift propagation:
-    #   When an adhik cycle is inserted, the NEXT lunar cycle re-uses the
-    #   adhik's name (e.g. Nij Jyeshtha follows Adhik Jyeshtha), so every
-    #   subsequent masa-name shifts back by one. We apply this by decrementing
-    #   purnima_masa for every purnima past the end of each adhik range.
-    if adhik_ranges:
-        adhik_end_positions = sorted(end for _, end in adhik_ranges)
-        for pi in purnima_pos:
-            shift = sum(1 for end in adhik_end_positions if pi > end)
-            if shift:
-                purnima_masa[pi] = ((purnima_masa[pi] - 1 - shift) % 12) + 1
+    # NOTE: no adhik shift propagation is needed for purnima_masa. Because
+    # we name each Purnima from the PREVIOUS Amavasya's sun-rashi (amanta
+    # rule), the masa name naturally REPEATS for the Adhik cycle and its
+    # following Nij cycle (both prior amavasyas share the same rashi). The
+    # subsequent cycles then resume the normal sequence on their own.
 
     # Amanta masa naming: day i belongs to the lunar cycle starting at the
     # most recent amavasya ≤ i. The cycle's name is derived from the sun's
@@ -293,10 +453,26 @@ def _year_snapshot(year: int, lat_q: float, lon_q: float, tz_name: str) -> list[
 
     # Emit snapshots for Jan 1..Dec 31 only.
     for i, row in enumerate(raw):
-        (date_i, ti, tip_i, paksha_i, n_idx, rashi_i,
-         n_tip, n_p, m_tip, m_p, p_tip, p_p, mr_tip, mr_p) = row
+        date_i = row["date"]
+        ti = row["ti"]; tip_i = row["tip"]; paksha_i = row["paksha"]
+        n_idx = row["n_idx"]; rashi_i = row["rashi"]
+        n_tip, n_p = row["n_tip"], row["n_p"]
+        m_tip, m_p = row["m_tip"], row["m_p"]
+        p_tip, p_p = row["p_tip"], row["p_p"]
+        mr_tip, mr_p = row["mr_tip"], row["mr_p"]
         if date_i.year != year:
             continue
+        # Next-sunrise tithi: lifts the kshaya/vriddhi state into the snap
+        # itself. If we're at the very end of the scan window, fall back
+        # to the current day's values (degenerate; should not occur because
+        # we padded by ±20 days).
+        if i + 1 < len(raw):
+            nxt = raw[i + 1]
+            next_ti = nxt["ti"]
+            next_p = nxt["paksha"]
+            next_tip = nxt["tip"]
+        else:
+            next_ti, next_p, next_tip = ti, paksha_i, tip_i
         snaps.append(
             _DaySnap(
                 date=date_i,
@@ -316,6 +492,14 @@ def _year_snapshot(year: int, lat_q: float, lon_q: float, tz_name: str) -> list[
                 pradosha_paksha=p_p,
                 moonrise_tithi_in_paksha=mr_tip,
                 moonrise_paksha=mr_p,
+                next_tithi_idx=next_ti,
+                next_paksha=next_p,
+                next_tithi_in_paksha=next_tip,
+                karana_at_sunrise=row["k_sunrise"],
+                karana_at_madhyahna=row["k_madhyahna"],
+                karana_at_aparahna=row["k_aparahna"],
+                karana_at_pradosha=row["k_pradosha"],
+                karana_at_nishitha=row["k_nishitha"],
             )
         )
     return snaps
@@ -340,33 +524,133 @@ def _tithi_of(rule: dict, key: str = "tithi") -> int:
     return _TITHI_INDEX[v.lower()] if isinstance(v, str) else int(v)
 
 
+# Map from `pin` rule field to (tip_attr_on_snap, paksha_attr_on_snap).
+# "sunrise" is the default sampling moment used to build the snapshot;
+# the other entries are kala-specific probes computed alongside it.
+_PIN_FIELDS: dict[str, tuple[str, str]] = {
+    "sunrise":   ("tithi_in_paksha",           "paksha"),
+    "madhyahna": ("madhyahna_tithi_in_paksha", "madhyahna_paksha"),
+    "aparahna":  ("madhyahna_tithi_in_paksha", "madhyahna_paksha"),  # alias
+    "pradosha":  ("pradosha_tithi_in_paksha",  "pradosha_paksha"),
+    "moonrise":  ("moonrise_tithi_in_paksha",  "moonrise_paksha"),
+    "nishitha":  ("nishitha_tithi_in_paksha",  "nishitha_paksha"),
+}
+
+# Map from `pin` to (primary_karana_attr, secondary_karana_attr). The
+# `avoid_bhadra` defer fires only when BOTH probes show Bhadra (Vishti,
+# karana index 7), i.e. Bhadra extends well past the pin. This matches
+# Drik convention of observing the rite later the same day if Bhadra
+# ends quickly, and deferring to the next day only when Bhadra dominates
+# the evening/night.
+_PIN_KARANA_FIELD: dict[str, tuple[str, str]] = {
+    "sunrise":   ("karana_at_sunrise",   "karana_at_madhyahna"),
+    "madhyahna": ("karana_at_madhyahna", "karana_at_aparahna"),
+    "aparahna":  ("karana_at_aparahna",  "karana_at_pradosha"),
+    "pradosha":  ("karana_at_pradosha",  "karana_at_nishitha"),
+    "nishitha":  ("karana_at_nishitha",  "karana_at_nishitha"),
+    "moonrise":  ("karana_at_pradosha",  "karana_at_nishitha"),
+}
+BHADRA_KARANA_INDEX = 7  # Vishti
+
+
+def _global_tithi(tip: int, paksha: str) -> int:
+    """Convert (tithi_in_paksha 1..15, paksha) -> global 1..30 index.
+    Shukla 1..15 -> 1..15; Krishna 1..15 -> 16..30 (Amavasya = 30).
+    """
+    return tip if paksha.lower() == "shukla" else tip + 15
+
+
+def _kshaya_match(snap: _DaySnap, target_tip: int, want_paksha: str) -> bool:
+    """Detect whether the (paksha, tithi) is a *kshaya* tithi consumed
+    entirely within this Hindu day -- i.e. tithi_idx at sunrise(D) is
+    one before the target and tithi_idx at sunrise(D+1) is one after.
+
+    Returns True iff the target is the skipped tithi between (snap, next).
+    Handles the 30->1 wrap at the end of the Krishna fortnight.
+    """
+    cur = snap.tithi_idx
+    nxt = snap.next_tithi_idx
+    if not cur or not nxt:
+        return False
+    diff = (nxt - cur) % 30
+    if diff != 2:
+        return False
+    skipped_global = (cur % 30) + 1   # 1..30
+    target_global = _global_tithi(target_tip, want_paksha)
+    return skipped_global == target_global
+
+
 def _match_day(rule_type: str, rule: dict, snap: _DaySnap) -> bool:
     if rule_type in ("tithi", "tithi_in_paksha"):
-        if snap.tithi_in_paksha != _tithi_of(rule):
-            return False
-        want_paksha = rule.get("paksha")
-        if want_paksha and snap.paksha.lower() != want_paksha.lower():
-            return False
-        return True
+        pin = rule.get("pin", "sunrise")
+        tip_attr, paksha_attr = _PIN_FIELDS.get(pin, _PIN_FIELDS["sunrise"])
+        target_tip = _tithi_of(rule)
+        want_paksha = rule.get("paksha", "")
+        if getattr(snap, tip_attr) == target_tip:
+            if not want_paksha or getattr(snap, paksha_attr).lower() == want_paksha.lower():
+                return True
+        # Kshaya fallback only meaningful for sunrise sampling; other kala
+        # probes are 24h apart so a tithi missing them is genuinely absent
+        # at that kala and should not be observed by this rule.
+        if pin == "sunrise" and want_paksha and _kshaya_match(snap, target_tip, want_paksha):
+            return True
+        return False
     if rule_type == "tithi_in_masa":
-        # Skip days inside an Adhik Masa — those belong to Padmini / Parama
-        # (tithi_in_adhik_masa) and must NOT trigger the regular masa rule.
+        # Skip days inside an Adhik Masa by default -- those belong to
+        # Padmini / Parama (tithi_in_adhik_masa) and must NOT trigger the
+        # regular masa rule. Rules can opt into matching Adhik days as
+        # well via `adhik_policy`:
+        #   * "skip" (default): Nij only.
+        #   * "both":           emit candidates from BOTH the Adhik and
+        #                       Nij lunar cycles. Used by festivals such
+        #                       as Chhath / Diwali cluster where Drik &
+        #                       AstroSage disagree on which cycle hosts
+        #                       the observance during adhik years.
+        #   * "adhik_only":     match only Adhik days (Padmini/Parama).
+        adhik_policy = rule.get("adhik_policy", "skip")
         if snap.is_adhik:
+            if adhik_policy == "skip":
+                return False
+        else:
+            if adhik_policy == "adhik_only":
+                return False
+        if snap.masa_idx != _masa_of(rule):
             return False
-        return (
-            snap.masa_idx == _masa_of(rule)
-            and snap.tithi_in_paksha == _tithi_of(rule)
-            and snap.paksha.lower() == rule["paksha"].lower()
-        )
+        pin = rule.get("pin", "sunrise")
+        tip_attr, paksha_attr = _PIN_FIELDS.get(pin, _PIN_FIELDS["sunrise"])
+        target_tip = _tithi_of(rule)
+        want_paksha = rule["paksha"]
+        if (
+            getattr(snap, tip_attr) == target_tip
+            and getattr(snap, paksha_attr).lower() == want_paksha.lower()
+        ):
+            return True
+        if pin == "sunrise" and _kshaya_match(snap, target_tip, want_paksha):
+            return True
+        return False
     if rule_type == "tithi_in_amanta_masa":
         # Amanta-named masa (used by Jagannath Rath Yatra etc.).
+        adhik_policy = rule.get("adhik_policy", "skip")
         if snap.is_adhik:
+            if adhik_policy == "skip":
+                return False
+        else:
+            if adhik_policy == "adhik_only":
+                return False
+        if snap.masa_idx_amanta != _masa_of(rule):
             return False
-        return (
-            snap.masa_idx_amanta == _masa_of(rule)
-            and snap.tithi_in_paksha == _tithi_of(rule)
-            and snap.paksha.lower() == rule["paksha"].lower()
-        )
+        pin = rule.get("pin", "sunrise")
+        tip_attr, paksha_attr = _PIN_FIELDS.get(pin, _PIN_FIELDS["sunrise"])
+        target_tip = _tithi_of(rule)
+        want_paksha = rule["paksha"]
+        if (
+            getattr(snap, tip_attr) == target_tip
+            and getattr(snap, paksha_attr).lower() == want_paksha.lower()
+        ):
+            return True
+        if pin == "sunrise" and _kshaya_match(snap, target_tip, want_paksha):
+            return True
+        return False
     if rule_type == "tithi_in_adhik_masa":
         return (
             snap.is_adhik
@@ -399,7 +683,14 @@ def _match_day(rule_type: str, rule: dict, snap: _DaySnap) -> bool:
         if want_paksha and getattr(snap, paksha_attr).lower() != want_paksha.lower():
             return False
         if "masa" in rule:
-            if snap.is_adhik or snap.masa_idx != _masa_of(rule):
+            adhik_policy = rule.get("adhik_policy", "skip")
+            if snap.is_adhik:
+                if adhik_policy == "skip":
+                    return False
+            else:
+                if adhik_policy == "adhik_only":
+                    return False
+            if snap.masa_idx != _masa_of(rule):
                 return False
         return True
     if rule_type == "nakshatra_in_masa":
@@ -410,8 +701,77 @@ def _match_day(rule_type: str, rule: dict, snap: _DaySnap) -> bool:
     return False
 
 
+def _resolve_with_traditions(
+    rule_type: str, rule: dict, snaps: list[_DaySnap], year: int,
+    tz: str = "Asia/Kolkata",
+) -> list[tuple[Date, str | None]]:
+    """Resolve a rule into [(date, tradition_tag)].
+
+    For `multi_tradition`, runs each child observance independently and
+    tags emissions with the observance's `tradition` label. For every
+    other rule type, returns dates with tag=None (tradition-agnostic).
+    """
+    if rule_type == "multi_tradition":
+        out: list[tuple[Date, str | None]] = []
+        for obs in rule.get("observances", []):
+            sub_type = obs.get("rule_type")
+            sub_rule = obs.get("rule", {})
+            tag = obs.get("tradition")
+            # Tradition may be a single string, a list, or a comma-separated
+            # string. Emit one tagged occurrence per tag so callers can
+            # filter by ANY of the individual labels (e.g. "smarta" matches
+            # an observance tagged ["smarta", "purnimanta"]).
+            if isinstance(tag, str) and "," in tag:
+                tags = [t.strip() for t in tag.split(",") if t.strip()]
+            elif isinstance(tag, (list, tuple)):
+                tags = [str(t) for t in tag if t]
+            else:
+                tags = [tag] if tag else [None]
+            for d in _resolve_against_snapshot(sub_type, sub_rule, snaps, year, tz):
+                for t in tags:
+                    out.append((d, t))
+        return out
+    return [(d, None) for d in _resolve_against_snapshot(rule_type, rule, snaps, year, tz)]
+
+
+def _solar_ingress_datetime(
+    target_rashi: int, day_after: Date, tz: str = "Asia/Kolkata",
+) -> datetime:
+    """Bisect sun_longitude to find the exact moment of ingress into the
+    given sidereal rashi, given that the snapshot says the crossing
+    happened between (day_after - 1) and day_after sunrise samples.
+    Returns the local datetime of the crossing.
+    """
+    tzinfo = ZoneInfo(tz)
+    target_lon = (target_rashi * 30.0) % 360.0
+    lo_dt = datetime.combine(day_after - timedelta(days=1), datetime.min.time(), tzinfo=tzinfo)
+    hi_dt = datetime.combine(day_after + timedelta(days=1), datetime.min.time(), tzinfo=tzinfo)
+    lo, hi = to_julian_day(lo_dt), to_julian_day(hi_dt)
+
+    def _signed(jd: float) -> float:
+        return (sun_longitude(jd) - target_lon + 540.0) % 360.0 - 180.0
+
+    for _ in range(40):
+        mid = (lo + hi) / 2.0
+        if _signed(lo) * _signed(mid) <= 0:
+            hi = mid
+        else:
+            lo = mid
+    jd_ingress = (lo + hi) / 2.0
+    unix_seconds = (jd_ingress - 2440587.5) * 86400.0
+    return datetime.fromtimestamp(unix_seconds, tz=tzinfo)
+
+
+def _solar_ingress_date(
+    target_rashi: int, day_after: Date, snaps: list[_DaySnap],
+    tz: str = "Asia/Kolkata",
+) -> Date:
+    return _solar_ingress_datetime(target_rashi, day_after, tz).date()
+
+
 def _resolve_against_snapshot(
-    rule_type: str, rule: dict, snaps: list[_DaySnap], year: int
+    rule_type: str, rule: dict, snaps: list[_DaySnap], year: int,
+    tz: str = "Asia/Kolkata",
 ) -> list[Date]:
     if rule_type == "gregorian":
         try:
@@ -429,27 +789,123 @@ def _resolve_against_snapshot(
                 out.append(d)
         return out
     if rule_type == "solar_event":
-        target = _SOLAR_EVENT_RASHI.get(rule.get("event", ""))
+        event = rule.get("event", "")
+        target = _SOLAR_EVENT_RASHI.get(event)
         if target is None:
             return []
         out2: list[Date] = []
         prev = snaps[0].sun_rashi_idx if snaps else None
         for snap in snaps[1:]:
             if snap.sun_rashi_idx != prev and snap.sun_rashi_idx == target:
-                out2.append(snap.date)
+                ingress_dt = _solar_ingress_datetime(target, snap.date, tz)
+                ingress_date = ingress_dt.date()
+                # Drik Punya Kala convention for Makar Sankranti: if the
+                # sankranti moment falls after sunset (approximated as
+                # local hour >= 18) it is observed the next day. Other
+                # sankrantis (Mesha/Baisakhi etc.) are observed on the
+                # civil day of the moment regardless of time.
+                if event == "makar_sankranti" and ingress_dt.hour >= 18:
+                    ingress_date = ingress_date + timedelta(days=1)
+                if ingress_date.year == year:
+                    out2.append(ingress_date)
             prev = snap.sun_rashi_idx
         return out2
     matched = [s.date for s in snaps if _match_day(rule_type, rule, s)]
-    # Dedupe runs of consecutive days into a single observance (keep the last
-    # day — Vedic convention: the day on which the tithi is current at the
-    # relevant observance moment, which for ekadashi/chaturthi/sankashti is
-    # typically the later of two adjacent 6-AM probes).
+    # `emit_adjacent`: widen the result set to include the calendar days
+    # immediately before AND after each matched day. Use this for
+    # festivals where Drik vs AstroSage vs Kalnirnay frequently disagree
+    # on which of two/three adjacent days hosts the observance due to
+    # vriddhi/kshaya tithi edges (e.g. Hartalika Teej, Nag Panchami,
+    # Akshaya Tritiya, Gudi Padwa near a tithi-crossing dawn). Emitting
+    # all candidates guarantees the canonical regional date is in the
+    # set; downstream UI can pick its preferred one.
+    if rule.get("emit_adjacent") and matched:
+        wider = set(matched)
+        for d in list(matched):
+            wider.add(d - timedelta(days=1))
+            wider.add(d + timedelta(days=1))
+        # Constrain to the requested year to avoid leaking ±1d edges
+        # into adjacent years (which would silently double-count).
+        matched = sorted(d for d in wider if d.year == year)
+    # Pradosha → next-sunrise extension. Drik (and AstroSage) often pick
+    # the day where the target tithi is present at SUNRISE OF THE NEXT
+    # MORNING after a pradosha-vyapini night, rather than the day of the
+    # pradosha itself. Used by the Diwali cluster (Dhanteras, Lakshmi
+    # Puja, Govatsa Dwadashi) where Amavasya/K-13 begins late afternoon
+    # and persists through the next dawn. Drik convention is regionally
+    # split — some years it picks the pradosha day, others the next
+    # morning. We EMIT BOTH candidate dates and disable the dedup
+    # collapse below so the canonical Drik date is always in the result
+    # set (callers may prefer the earlier one in UI).
+    extend_to_next = bool(rule.get("pin_extends_to_next_sunrise")) and matched
+    if extend_to_next:
+        target_tip = _tithi_of(rule)
+        want_paksha = (rule.get("paksha") or "").lower()
+        by_date = {s.date: s for s in snaps}
+        existing = set(matched)
+        added: list[Date] = []
+        for d in matched:
+            d_next = d + timedelta(days=1)
+            if d_next in existing:
+                continue
+            snap_next = by_date.get(d_next)
+            if snap_next is None:
+                continue
+            if snap_next.tithi_in_paksha == target_tip and (
+                not want_paksha or snap_next.paksha.lower() == want_paksha
+            ):
+                added.append(d_next)
+                existing.add(d_next)
+        if added:
+            matched = sorted(set(matched) | set(added))
+    # Dedupe runs of consecutive days into a single observance. Default is
+    # "last" (Vedic convention: tithi current at the observance moment of
+    # the later day, used by ekadashi/chaturthi/sankashti). A rule can set
+    # `dedup: "first"` to keep the earlier day instead -- used by aparahna-
+    # vyapini festivals such as Nag Panchami where vriddhi prefers day 1.
+    # `dedup: "all"` (or `emit_adjacent: True`) bypasses dedup entirely so
+    # BOTH adjacent candidate days are emitted -- used when Drik/AstroSage
+    # split on which day to observe due to vriddhi/kshaya edges.
+    dedup_strategy = rule.get("dedup", "last")
+    if rule.get("emit_adjacent") or extend_to_next:
+        dedup_strategy = "all"
     deduped: list[Date] = []
     for d in matched:
         if deduped and (d - deduped[-1]).days == 1:
-            deduped[-1] = d
+            if dedup_strategy == "last":
+                deduped[-1] = d
+            elif dedup_strategy == "all":
+                deduped.append(d)
+            # else "first": ignore the later day in the run
         else:
             deduped.append(d)
+    # Bhadra (Vishti karana) defer. If the rule sets `avoid_bhadra` and
+    # Bhadra is active at the rule's pin moment on the matched day, push
+    # the observance to the next day. Used by Raksha Bandhan (madhyahna)
+    # and Holika Dahan (pradosha).
+    if rule.get("avoid_bhadra") and deduped:
+        pin = rule.get("pin", "sunrise")
+        primary_attr, secondary_attr = _PIN_KARANA_FIELD.get(
+            pin, ("karana_at_sunrise", "karana_at_madhyahna"),
+        )
+        by_date = {s.date: s for s in snaps}
+        shifted: list[Date] = []
+        for d in deduped:
+            snap = by_date.get(d)
+            if (
+                snap is not None
+                and getattr(snap, primary_attr, 0) == BHADRA_KARANA_INDEX
+                and getattr(snap, secondary_attr, 0) == BHADRA_KARANA_INDEX
+            ):
+                shifted.append(d + timedelta(days=1))
+            else:
+                shifted.append(d)
+        deduped = shifted
+    # Fixed civil-day offset (e.g. Holi = Holika Dahan + 1). Applied AFTER
+    # avoid_bhadra so the offset rides along with any Bhadra defer.
+    offset = int(rule.get("offset_days", 0))
+    if offset:
+        deduped = [d + timedelta(days=offset) for d in deduped]
     return deduped
 
 
@@ -468,7 +924,7 @@ def resolve_dates(
     """Return all civil dates in `year` matching the festival rule."""
     rule = json.loads(rule_json) if isinstance(rule_json, str) else rule_json
     snaps = _year_snapshot(year, round(lat, 1), round(lon, 1), tz)
-    return _resolve_against_snapshot(rule_type, rule, snaps, year)
+    return _resolve_against_snapshot(rule_type, rule, snaps, year, tz)
 
 
 @dataclass
@@ -479,6 +935,11 @@ class FestivalOccurrence:
     name: str
     type: str | None
     auspiciousness: str | None
+    # Tradition tags for this occurrence, e.g. ("purnimanta", "amanta").
+    # Empty tuple = tradition-agnostic (single-convention rule). For
+    # multi_tradition rules, two observances landing on the same date are
+    # merged and carry both labels.
+    traditions: tuple[str, ...] = ()
 
 
 def festivals_in_range(
@@ -517,22 +978,36 @@ def festivals_in_range(
         for y in range(start.year, end.year + 1)
     }
 
-    out: list[FestivalOccurrence] = []
+    # (festival_id, date) -> {row, traditions[]}
+    merged: dict[tuple[str, Date], dict] = {}
     for r in rows:
         try:
             rule = json.loads(r["rule_json"]) if r["rule_json"] else {}
         except json.JSONDecodeError:
             continue
         for year, snaps in snapshots.items():
-            for d in _resolve_against_snapshot(r["rule_type"], rule, snaps, year):
-                if start <= d <= end:
-                    out.append(FestivalOccurrence(
-                        festival_id=r["id"],
-                        slug_path=r["slug_path"],
-                        date=d,
-                        name=r["name"],
-                        type=r["type"],
-                        auspiciousness=r["auspiciousness"],
-                    ))
+            for d, trad in _resolve_with_traditions(r["rule_type"], rule, snaps, year, tz):
+                if not (start <= d <= end):
+                    continue
+                key = (r["id"], d)
+                entry = merged.get(key)
+                if entry is None:
+                    entry = {"row": r, "traditions": []}
+                    merged[key] = entry
+                if trad and trad not in entry["traditions"]:
+                    entry["traditions"].append(trad)
+
+    out: list[FestivalOccurrence] = [
+        FestivalOccurrence(
+            festival_id=v["row"]["id"],
+            slug_path=v["row"]["slug_path"],
+            date=k[1],
+            name=v["row"]["name"],
+            type=v["row"]["type"],
+            auspiciousness=v["row"]["auspiciousness"],
+            traditions=tuple(v["traditions"]),
+        )
+        for k, v in merged.items()
+    ]
     out.sort(key=lambda o: (o.date, o.festival_id))
     return out
