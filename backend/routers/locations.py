@@ -60,4 +60,3 @@ def api_get(geonameid: int, language: str = Query("en")):
         row,
         headers={"Cache-Control": "public, max-age=86400, immutable"},
     )
-

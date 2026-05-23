@@ -36,8 +36,8 @@ import httpx
 # Configuration
 # ---------------------------------------------------------------------------
 
-DATA_DIR = Path(__file__).parent / "data" / "locations"
-DB_PATH = DATA_DIR / "locations.db"
+DATA_DIR = Path(__file__).parent / "data" 
+DB_PATH = DATA_DIR / "sqlite.db"
 
 GEONAMES_BASE = "https://download.geonames.org/export/dump"
 
@@ -143,62 +143,31 @@ def download_geonames() -> dict[str, list[Path]]:
 
 # ---------------------------------------------------------------------------
 # Step 2 — Build the SQLite database
+#
+# Schema lives in schema.sql (single source of truth, shared with the festival
+# / muhurat tables). The build pipeline DROPs the GeoNames tables for a clean
+# reload, then re-applies the full schema (CREATE IF NOT EXISTS) to recreate
+# them alongside any other tables already in the file.
 # ---------------------------------------------------------------------------
 
-DDL = """
-DROP TABLE IF EXISTS geonames_cities;
-CREATE TABLE geonames_cities (
-    id            INTEGER PRIMARY KEY,
-    name          TEXT NOT NULL,
-    asciiname     TEXT NOT NULL,
-    country       TEXT NOT NULL,
-    admin1_code   TEXT,
-    admin2_code   TEXT,
-    lat           REAL NOT NULL,
-    lon           REAL NOT NULL,
-    tz            TEXT NOT NULL,
-    population    INTEGER NOT NULL DEFAULT 0,
-    feature_code  TEXT
-);
-CREATE INDEX idx_cities_country ON geonames_cities(country);
+SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
-DROP TABLE IF EXISTS geonames_admin1;
-CREATE TABLE geonames_admin1 (
-    code        TEXT PRIMARY KEY,  -- e.g. "IN.36"
-    name        TEXT NOT NULL,
-    ascii_name  TEXT NOT NULL
-);
+# Tables/virtual tables owned by this module. Dropped before each rebuild.
+_GEONAMES_TABLES = (
+    "cities_rtree",   # virtual (rtree)
+    "cities_fts",     # virtual (fts5)
+    "geonames_cities",
+    "geonames_admin1",
+    "geonames_admin2",
+    "countries",
+)
 
-DROP TABLE IF EXISTS geonames_admin2;
-CREATE TABLE geonames_admin2 (
-    code        TEXT PRIMARY KEY,  -- e.g. "IN.36.182"
-    name        TEXT NOT NULL,
-    ascii_name  TEXT NOT NULL
-);
 
-DROP TABLE IF EXISTS countries;
-CREATE TABLE countries (
-    iso2     TEXT PRIMARY KEY,
-    name     TEXT NOT NULL
-);
-
--- FTS5 virtual table for typeahead. Uses unicode61 with diacritic removal
--- so "varan" matches "Vārāṇasī" and "वाराणसी" both (with altnames loaded).
-DROP TABLE IF EXISTS cities_fts;
-CREATE VIRTUAL TABLE cities_fts USING fts5(
-    name,           -- localized + asciiname concatenated; what we MATCH against
-    content='',     -- contentless: we manage rows manually
-    tokenize="unicode61 remove_diacritics 2"
-);
-
--- R*Tree for /resolve's nearest-city query
-DROP TABLE IF EXISTS cities_rtree;
-CREATE VIRTUAL TABLE cities_rtree USING rtree(
-    id,             -- matches geonames_cities.id
-    min_lat, max_lat,
-    min_lon, max_lon
-);
-"""
+def _reset_geonames_tables(conn: sqlite3.Connection) -> None:
+    """Drop only the GeoNames-owned tables so a rebuild starts clean
+    without touching festival / muhurat / crawl tables."""
+    for t in _GEONAMES_TABLES:
+        conn.execute(f"DROP TABLE IF EXISTS {t}")
 
 
 def build_database(paths: dict[str, list[Path]]) -> None:
@@ -206,7 +175,8 @@ def build_database(paths: dict[str, list[Path]]) -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(DB_PATH)
-    conn.executescript(DDL)
+    _reset_geonames_tables(conn)
+    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
 
     # --- countries ----------------------------------------------------------
     print("  · loading countries...")

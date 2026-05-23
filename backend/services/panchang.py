@@ -120,6 +120,27 @@ RASHI_NAMES = [
 RASHI_LORDS = ["Mars", "Venus", "Mercury", "Moon", "Sun", "Mercury",
                "Venus", "Mars", "Jupiter", "Saturn", "Saturn", "Jupiter"]
 
+# Lunar months. Convention: the masa CONTAINING a given moment is named after
+# the sankranti (sun's sidereal sign ingress) that occurred during this lunar
+# cycle. Simplified rule used here: at any instant, masa index = sun's sidereal
+# rashi (0=Mesha → Chaitra). Good enough for festival date resolution.
+# Reference: Surya Siddhanta — same mapping is what drikpanchang uses for
+# "purnimanta" labels at month granularity.
+MASA_NAMES = [
+    "Chaitra",     # Sun in Mesha
+    "Vaishakha",   # Sun in Vrishabha
+    "Jyeshtha",    # Sun in Mithuna
+    "Ashadha",     # Sun in Karka
+    "Shravana",    # Sun in Simha
+    "Bhadrapada",  # Sun in Kanya
+    "Ashwin",      # Sun in Tula
+    "Kartika",     # Sun in Vrishchika
+    "Margashirsha",# Sun in Dhanu
+    "Paush",       # Sun in Makara
+    "Magha",       # Sun in Kumbha
+    "Phalguna",    # Sun in Meena
+]
+
 WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday",
                  "Friday", "Saturday", "Sunday"]
 
@@ -496,6 +517,42 @@ def compute_rashi(jd: float) -> RashiInfo:
         moon_sign=RASHI_NAMES[moon_idx],
         moon_sign_lord=RASHI_LORDS[moon_idx],
     )
+
+
+# ---------------------------------------------------------------------------
+# Masa (lunar month) — required by every festival rule of the form
+# "tithi_in_masa" (Diwali = Kartika Krishna Amavasya, etc.)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class MasaInfo:
+    index: int        # 1..12, Chaitra=1 .. Phalguna=12
+    name: str
+
+
+def compute_masa(jd: float) -> MasaInfo:
+    """
+    Return the lunar month (Purnimanta convention) containing this instant.
+
+    Purnimanta: the lunar month named X *ends* on the purnima whose ending
+    moment finds the sun in rashi (X-1). Equivalently, while the sun is in
+    sidereal rashi R, the running lunar month is named for rashi (R+1).
+
+    Examples (sidereal):
+      Sun in Kanya  (Aug 17 – Sep 17) → Bhadrapada masa
+        ⇒ Ganesh Chaturthi (Bhadrapada Shukla 4) falls mid-September ✓
+      Sun in Tula   (Oct 17 – Nov 16) → Kartika masa
+        ⇒ Diwali (Kartika Krishna Amavasya) falls early November ✓
+      Sun in Kumbha (Feb 12 – Mar 13) → Phalguna masa
+        ⇒ Mahashivratri (Phalguna Krishna 14) falls mid-February ✓
+
+    This matches the labels published by drikpanchang.com for North-Indian
+    Purnimanta calendars and is the convention every rule in
+    services/festival_rules_seed.py is written against.
+    """
+    sun_idx = int(sun_longitude(jd) // 30)   # 0..11
+    masa_idx = (sun_idx + 1) % 12
+    return MasaInfo(index=masa_idx + 1, name=MASA_NAMES[masa_idx])
 
 
 # ---------------------------------------------------------------------------

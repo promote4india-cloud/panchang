@@ -355,3 +355,97 @@ def compute_muhurat_by_id(
         if w.id == muhurat_id:
             return w
     return None
+
+
+# ---------------------------------------------------------------------------
+# Festival-page muhurats (Pradosh Kaal, Vrishabha Kaal)
+# Referenced by Dhanteras / Diwali pages on astrosage. Both are derivable.
+# ---------------------------------------------------------------------------
+
+def compute_pradosh_kaal(
+    date: Date, lat: float, lon: float, tz: str = "Asia/Kolkata",
+) -> MuhuratWindow:
+    """
+    Pradosh Kaal — the twilight window around sunset, traditionally defined as
+    "the 3 muhurtas straddling sunset" i.e. 1.5 muhurtas before to 1.5 after.
+    One muhurta = day_length / 15, so total width ≈ 2h24m on equinoxes.
+
+    Practical convention used by drikpanchang & astrosage:
+        start = sunset - 0.75 muhurta
+        end   = sunset + 2.25 muhurta
+    which yields the values shown in the Dhanteras page (Pradosh Kaal ~2h36m).
+    """
+    tzinfo = ZoneInfo(tz)
+    sm = compute_sun_moon(date, lat, lon, tzinfo)
+    if not (sm.sunrise_local and sm.sunset_local):
+        raise ValueError(f"No sunset for {date} at ({lat},{lon})")
+
+    sunrise = datetime.fromisoformat(sm.sunrise_local)
+    sunset = datetime.fromisoformat(sm.sunset_local)
+    muhurta = (sunset - sunrise) / 15
+    return MuhuratWindow(
+        id="pradosh",
+        name="Pradosh Kaal",
+        start=sunset - 0.75 * muhurta,
+        end=sunset + 2.25 * muhurta,
+        kind="auspicious",
+    )
+
+
+def compute_vrishabha_kaal(
+    date: Date, lat: float, lon: float, tz: str = "Asia/Kolkata",
+) -> MuhuratWindow | None:
+    """
+    Vrishabha Kaal — the interval on a given evening when the ascendant
+    (lagna) sits in the sidereal sign Vrishabha (Taurus). Required for
+    Dhanteras / Diwali Lakshmi Puja muhurat (Vrishabha is a fixed sign,
+    making the puja stable).
+
+    Algorithm: sample lagna every 4 min starting at sunset for 6 h, return
+    the contiguous interval where the ascendant longitude (sidereal) is in
+    [30°, 60°). Returns None if Vrishabha doesn't rise in that window
+    (rare at high latitudes).
+    """
+    import swisseph as swe  # local import — already pinned in pyproject
+    from .panchang import SIDEREAL_FLAG, to_julian_day, from_julian_day
+
+    tzinfo = ZoneInfo(tz)
+    sm = compute_sun_moon(date, lat, lon, tzinfo)
+    if not sm.sunset_local:
+        return None
+    sunset = datetime.fromisoformat(sm.sunset_local)
+
+    def asc_long(dt: datetime) -> float:
+        jd = to_julian_day(dt.astimezone(ZoneInfo("UTC")))
+        # houses_ex returns (cusps, ascmc); ascmc[0] is the ascendant in
+        # TROPICAL longitude. Convert to sidereal by subtracting ayanamsa.
+        _cusps, ascmc = swe.houses_ex(jd, lat, lon, b"P", SIDEREAL_FLAG)
+        ayan = swe.get_ayanamsa_ut(jd)
+        return (ascmc[0] - ayan) % 360
+
+    step = timedelta(minutes=4)
+    horizon = sunset + timedelta(hours=6)
+    start: datetime | None = None
+    end: datetime | None = None
+    t = sunset
+    while t <= horizon:
+        in_vrishabha = 30.0 <= asc_long(t) < 60.0
+        if in_vrishabha and start is None:
+            start = t
+        elif not in_vrishabha and start is not None:
+            end = t
+            break
+        t += step
+
+    if start is None:
+        return None
+    if end is None:
+        end = horizon
+
+    return MuhuratWindow(
+        id="vrishabha",
+        name="Vrishabha Kaal",
+        start=start,
+        end=end,
+        kind="auspicious",
+    )

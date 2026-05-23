@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
-from services.muhurat import (
+from backend.services.muhurat import (
     compute_muhurat,
     compute_muhurat_by_id,
 )
