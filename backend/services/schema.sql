@@ -188,7 +188,26 @@ CREATE INDEX IF NOT EXISTS idx_crawl_tasks_status ON crawl_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_crawl_tasks_job    ON crawl_tasks(last_job_id);
 
 -- ---------------------------------------------------------------------------
--- 11. GeoNames location tables (used by services/locations.py).
+-- 11. Persistent cache for expensive festival year snapshots.
+--     Keyed by (year, quantized lat/lon, tz spec, ayanamsa, schema version)
+--     so warm snapshots survive process restarts.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS festival_year_snapshots (
+    year            INTEGER NOT NULL,
+    lat_key         TEXT NOT NULL,
+    lon_key         TEXT NOT NULL,
+    tz_name         TEXT NOT NULL,
+    ayanamsa        TEXT NOT NULL,
+    schema_version  INTEGER NOT NULL,
+    payload_gzip    BLOB NOT NULL,
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (year, lat_key, lon_key, tz_name, ayanamsa, schema_version)
+);
+CREATE INDEX IF NOT EXISTS idx_festival_snapshot_updated
+    ON festival_year_snapshots(updated_at);
+
+-- ---------------------------------------------------------------------------
+-- 12. GeoNames location tables (used by services/locations.py).
 --     Source of truth for /v1/locations/{search,resolve,{id}}.
 --     The build pipeline (locations.build_database) explicitly DROPs these
 --     before reloading, so CREATE IF NOT EXISTS here is safe for both

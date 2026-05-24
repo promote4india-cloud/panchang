@@ -745,6 +745,18 @@ class MasaInfo:
     name: str
 
 
+@dataclass
+class HinduMonthYearInfo:
+    shaka_samvat_year: int
+    samvatsara_name: str
+    vikram_samvat_year: int
+    kali_samvat_year: int
+    pravishte_gate: int
+    month_purnimanta: str
+    month_amanta: str
+    day_duration: str
+
+
 def compute_masa(jd: float) -> MasaInfo:
     """
     Return the lunar month (Purnimanta convention) containing this instant.
@@ -770,6 +782,89 @@ def compute_masa(jd: float) -> MasaInfo:
     return MasaInfo(index=masa_idx + 1, name=MASA_NAMES[masa_idx])
 
 
+def _format_hms(total_seconds: int) -> str:
+    h = total_seconds // 3600
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _compute_pravishte_gate(local_date: date, tz: ZoneInfo) -> int:
+    noon = datetime.combine(local_date, datetime.min.time(), tzinfo=tz) + timedelta(hours=12)
+    jd_now = to_julian_day(noon)
+    cur_sign = int(sun_longitude(jd_now) // 30)
+
+    # Find an interval [lo, hi] that brackets the latest sankranti.
+    hi = jd_now
+    lo = jd_now - 1.0
+    while int(sun_longitude(lo) // 30) == cur_sign:
+        hi = lo
+        lo -= 1.0
+        if jd_now - lo > 40.0:
+            break
+
+    boundary = cur_sign * 30.0
+    sankranti_jd = _find_boundary_crossing(lo, hi, boundary, sun_longitude)
+    sankranti_local_date = from_julian_day(sankranti_jd, tz).date()
+    # 1-based day count from sankranti (matches AstroSage display).
+    return max(1, (local_date - sankranti_local_date).days + 1)
+
+
+def compute_hindu_month_year_info(
+    local_date: date,
+    jd_ref: float,
+    tz: ZoneInfo,
+    lat: float,
+    lon: float,
+    sun_moon: SunMoon,
+    tithi: TithiInfo,
+) -> HinduMonthYearInfo:
+    # Era years
+    shaka = local_date.year - 78 if local_date >= date(local_date.year, 3, 22) else local_date.year - 79
+    vikram = shaka + 135
+    kali = local_date.year + 3101
+
+    # Reuse the production-grade snapshot logic used by festival matching
+    # so purnimanta/amanta labels and adhik detection stay consistent.
+    from .festivals import _year_snapshot
+
+    # Coarser quantization avoids rebuilding an expensive year snapshot for
+    # tiny GPS jitter (few meters) that does not materially change masa labels.
+    snaps = _year_snapshot(local_date.year, round(lat, 1), round(lon, 1), str(tz.key))
+    snap = next((s for s in snaps if s.date == local_date), None)
+
+    if snap is not None:
+        purnimanta_idx = snap.masa_idx
+        amanta_idx = snap.masa_idx_amanta
+        is_adhik = snap.is_adhik
+    else:
+        # Fallback: keep a deterministic month when snapshot lookup fails.
+        amanta_idx = compute_masa(jd_ref).index
+        purnimanta_idx = amanta_idx
+        is_adhik = False
+
+    month_suffix = " (Adhik)" if is_adhik else ""
+
+    day_seconds = 0
+    if sun_moon.sunrise_local and sun_moon.sunset_local:
+        sr = datetime.fromisoformat(sun_moon.sunrise_local)
+        ss = datetime.fromisoformat(sun_moon.sunset_local)
+        day_seconds = max(0, int(round((ss - sr).total_seconds())))
+    elif sun_moon.day_length_minutes is not None:
+        day_seconds = int(round(sun_moon.day_length_minutes * 60))
+
+    return HinduMonthYearInfo(
+        shaka_samvat_year=shaka,
+        samvatsara_name=tamil_jovian_year(local_date),
+        vikram_samvat_year=vikram,
+        kali_samvat_year=kali,
+        pravishte_gate=_compute_pravishte_gate(local_date, tz),
+        month_purnimanta=MASA_NAMES[purnimanta_idx - 1] + month_suffix,
+        month_amanta=MASA_NAMES[amanta_idx - 1] + month_suffix,
+        day_duration=_format_hms(day_seconds),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Top-level aggregate (powers GET /v1/panchang/today)
 # ---------------------------------------------------------------------------
@@ -784,6 +879,7 @@ class Panchang:
     karana: KaranaInfo
     rashi: RashiInfo
     sun_moon: SunMoon
+    hindu_month_and_year: HinduMonthYearInfo
 
 
 def compute_panchang(local_date: date, lat: float, lon: float, tz_name: str) -> Panchang:
@@ -807,6 +903,7 @@ def compute_panchang(local_date: date, lat: float, lon: float, tz_name: str) -> 
     yoga = compute_yoga(jd_ref, tz)
     karana = compute_karana(jd_ref, tz)
     rashi = compute_rashi(jd_ref)
+    hindu_month_and_year = compute_hindu_month_year_info(local_date, jd_ref, tz, lat, lon, sm, tithi)
 
     weekday = WEEKDAY_NAMES[local_date.weekday()]
 
@@ -819,6 +916,7 @@ def compute_panchang(local_date: date, lat: float, lon: float, tz_name: str) -> 
         karana=karana,
         rashi=rashi,
         sun_moon=sm,
+        hindu_month_and_year=hindu_month_and_year,
     )
 
 
@@ -833,6 +931,7 @@ def panchang_to_dict(p: Panchang) -> dict:
         "karana": asdict(p.karana),
         "rashi": asdict(p.rashi),
         "sun_moon": asdict(p.sun_moon),
+        "hindu_month_and_year": asdict(p.hindu_month_and_year),
     }
 
 

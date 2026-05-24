@@ -60,13 +60,14 @@ are instant.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import gzip
+from dataclasses import asdict, dataclass
 from datetime import date as Date, datetime, timedelta
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
 from .cache import ttl_cache
-from .db import connect_ro
+from .db import connect_ro, connect_rw
 from .panchang import (
     compute_karana,
     MASA_NAMES,
@@ -75,6 +76,7 @@ from .panchang import (
     compute_nakshatra,
     compute_tithi,
     sun_longitude,
+    moon_longitude,
     to_julian_day,
     ayanamsa_mode,
     tropical_sun_longitude,
@@ -244,6 +246,34 @@ def _ref_jd(d: Date, tz: ZoneInfo) -> float:
     )
 
 
+def _fast_tithi(jd: float) -> tuple[int, int, str]:
+    """Index-only tithi probe (no bisection for start/end).
+    Returns (global_index 1..30, tithi_in_paksha 1..15, paksha).
+    """
+    diff = (moon_longitude(jd) - sun_longitude(jd)) % 360
+    n = int(diff // 12)              # 0..29
+    idx = n + 1                      # 1..30
+    tip = idx if idx <= 15 else idx - 15
+    paksha = "Shukla" if n < 15 else "Krishna"
+    return idx, tip, paksha
+
+
+def _fast_karana_index(jd: float) -> int:
+    """Index-only karana probe (no bisection for start/end)."""
+    diff = (moon_longitude(jd) - sun_longitude(jd)) % 360
+    half_idx = int(diff // 6)        # 0..59
+    if half_idx == 0:
+        return 11                    # Kimstughna (fixed, Shukla Pratipada 1st half)
+    if half_idx >= 57:
+        return 8 + (half_idx - 57)   # Shakuni / Chatushpada / Naga -> 8,9,10
+    return ((half_idx - 1) % 7) + 1  # Bava..Vishti -> 1..7
+
+
+def _fast_nakshatra_index(jd: float) -> int:
+    """Index-only nakshatra probe (no bisection)."""
+    return int(moon_longitude(jd) // (360.0 / 27.0)) + 1
+
+
 def _bhadra_phase(jd_pin: float) -> str:
     """Compute the Bhadra (Vishti karana) phase at the pin moment.
 
@@ -258,32 +288,22 @@ def _bhadra_phase(jd_pin: float) -> str:
     Bhadra spans one half-tithi ≈ 6 hours; we bracket its start and
     end with a coarse 30-min scan then bisect for fractional position.
     """
-    try:
-        k_pin = compute_karana(jd_pin, ZoneInfo("UTC")).index
-    except Exception:
-        return ""
-    if k_pin != 7:
+    if _fast_karana_index(jd_pin) != 7:
         return ""
     step = 30.0 / (24.0 * 60.0)  # 30 minutes in JD
     # Walk backward until karana != 7 → start of Bhadra.
     lo = jd_pin
     for _ in range(40):  # ~20h cap (Bhadra ≤ 6h)
         prev = lo - step
-        try:
-            if compute_karana(prev, ZoneInfo("UTC")).index != 7:
-                break
-        except Exception:
-            return ""
+        if _fast_karana_index(prev) != 7:
+            break
         lo = prev
     # Walk forward until karana != 7 → end of Bhadra.
     hi = jd_pin
     for _ in range(40):
         nxt = hi + step
-        try:
-            if compute_karana(nxt, ZoneInfo("UTC")).index != 7:
-                break
-        except Exception:
-            return ""
+        if _fast_karana_index(nxt) != 7:
+            break
         hi = nxt
     span = (hi - lo)
     if span <= 0:
@@ -294,6 +314,116 @@ def _bhadra_phase(jd_pin: float) -> str:
     if frac > 0.6:
         return "puchha"
     return "middle"
+
+
+_SNAPSHOT_SCHEMA_VERSION = 1
+
+
+def _snapshot_cache_key_parts(
+    year: int,
+    lat_q: float,
+    lon_q: float,
+    tz_name: str,
+    ayanamsa: str,
+) -> tuple[int, str, str, str, str, int]:
+    return (
+        year,
+        f"{lat_q:.1f}",
+        f"{lon_q:.1f}",
+        tz_name,
+        ayanamsa,
+        _SNAPSHOT_SCHEMA_VERSION,
+    )
+
+
+def _serialize_snapshot(snaps: list[_DaySnap]) -> bytes:
+    rows = []
+    for s in snaps:
+        d = asdict(s)
+        d["date"] = s.date.isoformat()
+        rows.append(d)
+    raw = json.dumps(rows, separators=(",", ":")).encode("utf-8")
+    return gzip.compress(raw, compresslevel=6)
+
+
+def _deserialize_snapshot(blob: bytes) -> list[_DaySnap]:
+    raw = gzip.decompress(blob)
+    rows = json.loads(raw.decode("utf-8"))
+    out: list[_DaySnap] = []
+    for row in rows:
+        row["date"] = Date.fromisoformat(row["date"])
+        out.append(_DaySnap(**row))
+    return out
+
+
+def _snapshot_cache_get(
+    year: int,
+    lat_q: float,
+    lon_q: float,
+    tz_name: str,
+    ayanamsa: str,
+) -> list[_DaySnap] | None:
+    key = _snapshot_cache_key_parts(year, lat_q, lon_q, tz_name, ayanamsa)
+    try:
+        conn = connect_ro()
+    except Exception:
+        return None
+    try:
+        row = conn.execute(
+            """
+            SELECT payload_gzip
+              FROM festival_year_snapshots
+             WHERE year = ?
+               AND lat_key = ?
+               AND lon_key = ?
+               AND tz_name = ?
+               AND ayanamsa = ?
+               AND schema_version = ?
+            """,
+            key,
+        ).fetchone()
+        if not row:
+            return None
+        return _deserialize_snapshot(row["payload_gzip"])
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def _snapshot_cache_put(
+    year: int,
+    lat_q: float,
+    lon_q: float,
+    tz_name: str,
+    ayanamsa: str,
+    snaps: list[_DaySnap],
+) -> None:
+    key = _snapshot_cache_key_parts(year, lat_q, lon_q, tz_name, ayanamsa)
+    payload = _serialize_snapshot(snaps)
+    try:
+        conn = connect_rw()
+    except Exception:
+        return
+    try:
+        conn.execute(
+            """
+            INSERT INTO festival_year_snapshots
+                (year, lat_key, lon_key, tz_name, ayanamsa,
+                 schema_version, payload_gzip, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(year, lat_key, lon_key, tz_name, ayanamsa, schema_version)
+            DO UPDATE SET
+                payload_gzip = excluded.payload_gzip,
+                updated_at = datetime('now')
+            """,
+            (*key, payload),
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
 
 
 @ttl_cache(maxsize=64, ttl_seconds=24 * 3600)
@@ -317,8 +447,14 @@ def _year_snapshot(
     This is what drikpanchang and most North-Indian almanacs publish, and is
     what services/festival_rules_seed.py was written against.
     """
+    cached = _snapshot_cache_get(year, lat_q, lon_q, tz_name, ayanamsa)
+    if cached is not None:
+        return cached
+
     with ayanamsa_mode(ayanamsa):
-        return _build_year_snapshot(year, lat_q, lon_q, tz_name)
+        snaps = _build_year_snapshot(year, lat_q, lon_q, tz_name)
+    _snapshot_cache_put(year, lat_q, lon_q, tz_name, ayanamsa, snaps)
+    return snaps
 
 
 def _resolve_tzinfo(tz_name: str):
@@ -355,12 +491,12 @@ def _build_year_snapshot(year: int, lat_q: float, lon_q: float, tz_name: str) ->
     raw: list[dict] = []
 
     def _probe_at_jd(jd: float) -> tuple[int, str]:
-        tt = compute_tithi(jd, utc)
-        return (tt.index if tt.index <= 15 else tt.index - 15, tt.paksha)
+        _, tip, paksha = _fast_tithi(jd)
+        return tip, paksha
 
     def _karana_at(jd: float) -> int:
         try:
-            return compute_karana(jd, utc).index
+            return _fast_karana_index(jd)
         except Exception:
             return 0
 
@@ -400,9 +536,8 @@ def _build_year_snapshot(year: int, lat_q: float, lon_q: float, tz_name: str) ->
             jd = _ref_jd(cur, tz)
         else:
             jd = sunrise_jd
-        t = compute_tithi(jd, utc)
-        tip = t.index if t.index <= 15 else t.index - 15
-        n = compute_nakshatra(jd, utc)
+        t_idx, tip, t_paksha = _fast_tithi(jd)
+        n_idx_sr = _fast_nakshatra_index(jd)
         rashi = int(sun_longitude(jd) // 30)
         # Fallback to fixed-hour proxies if rise/set fails (polar / extreme).
         if sunset_jd is None:
@@ -483,12 +618,12 @@ def _build_year_snapshot(year: int, lat_q: float, lon_q: float, tz_name: str) ->
         # Nakshatra at nishitha for the Rohini-at-Nishitha refinement
         # used by Vaishnava Janmashtami.
         try:
-            nishitha_n_idx = compute_nakshatra(nishitha_jd, utc).index
+            nishitha_n_idx = _fast_nakshatra_index(nishitha_jd)
         except Exception:
             nishitha_n_idx = 0
         raw.append({
-            "date": cur, "ti": t.index, "tip": tip, "paksha": t.paksha,
-            "n_idx": n.index, "rashi": rashi,
+            "date": cur, "ti": t_idx, "tip": tip, "paksha": t_paksha,
+            "n_idx": n_idx_sr, "rashi": rashi,
             "n_tip": n_tip, "n_p": n_p,
             "m_tip": m_tip, "m_p": m_p,
             "p_tip": p_tip, "p_p": p_p,
