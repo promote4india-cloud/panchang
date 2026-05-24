@@ -17,6 +17,15 @@ CREATE TABLE IF NOT EXISTS festivals (
     -- Rule for date derivation (see services/festivals.py)
     rule_type       TEXT,                        -- 'tithi'|'tithi_in_masa'|'tithi_in_paksha'|'nakshatra_in_masa'|'solar_event'|'gregorian'|'manual'|NULL
     rule_json       TEXT,                        -- JSON: {masa, paksha, tithi, nakshatra, month, day, ...}
+    -- JSON array of region/community/sect tags identifying WHERE/by WHOM this
+    -- festival is observed. NULL or empty array = universal (shown for every
+    -- tradition query). Non-empty = festival is shown only when the caller's
+    -- requested tradition bag intersects this set. Tags are free-form strings
+    -- matching the vocabulary in routers/festivals.py REGION_TRADITIONS values
+    -- (e.g. 'kerala','malayali','south','amanta','tamil','sikh','vaishnava').
+    -- Distinct from `rule_json`'s `multi_tradition.observances[].tradition`
+    -- which tags individual date-VARIANTS of the same festival.
+    scope_traditions TEXT,
     thumbnail_url   TEXT,
     source_url      TEXT,                        -- canonical astrosage URL
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),

@@ -1,15 +1,16 @@
 """
-Public festivals endpoints (matches endpoints.md §5).
+Public festivals endpoints (matches endpoints.md Â§5).
 
-  GET /v1/festivals             — list in [from,to]
-  GET /v1/festivals/today       — festival(s) today
-  GET /v1/festivals/upcoming    — next 7d / 30d / 90d groupings
-  GET /v1/festivals/calendar    — month grid
-  GET /v1/festivals/{id}        — full editorial detail
+  GET /v1/festivals             â€” list in [from,to]
+  GET /v1/festivals/today       â€” festival(s) today
+  GET /v1/festivals/upcoming    â€” next 7d / 30d / 90d groupings
+  GET /v1/festivals/calendar    â€” month grid
+  GET /v1/festivals/{id}        â€” full editorial detail
 """
 
 from __future__ import annotations
 
+import json
 from calendar import monthrange
 from datetime import date as Date, datetime, timedelta
 from typing import Literal
@@ -40,81 +41,202 @@ TraditionQ = Query(
         "regions (e.g. 'north,west')."
     ),
 )
+AyanamsaQ = Query(
+    "lahiri",
+    description=(
+        "Sidereal ayanamsa frame for tithi/nakshatra/rashi calculations. "
+        "Default 'lahiri' = Indian Govt / Drik convention. Other modes: "
+        "'surya_siddhanta' (Bangladesh / classical Panjika), 'raman' "
+        "(B.V. Raman), 'krishnamurti' (KP astrology), 'true_citra' "
+        "(Drik Chitra-paksha refinement), 'yukteshwar', 'fagan_bradley' "
+        "(Western sidereal). Affects sankranti boundaries (and hence "
+        "regional new-year dates) by 0-1 day across years."
+    ),
+)
+CalendarTimeQ = Query(
+    "civil",
+    description=(
+        "Time reference for sunrise/sunset anchors. 'civil' (default) "
+        "uses the supplied IANA tz. 'LMT' uses Local Mean Time "
+        "(longitude * 4 min/deg), matching classical panjika reckoning. "
+        "LMT can shift sunrise by up to ~30 min vs IST in extreme east/west "
+        "Indian longitudes, occasionally flipping a sunrise-anchored "
+        "festival by one day."
+    ),
+)
 
 
-# Region / state -> list of tradition tags. North + Northeast + East follow
-# Purnimanta (lunar month ends at Purnima); South + West follow Amanta
-# (month ends at Amavasya). State entries listed explicitly so callers can
-# pass natural geographic names instead of memorizing the calendar convention.
+# Region / community / sect -> equivalence bag of tradition tags. A caller
+# value is expanded into ALL its synonyms; a festival passes the filter if
+# either (a) its scope_traditions intersects the bag, OR (b) the festival
+# is universal (empty scope) -- AND for occurrences with variant tags from
+# `multi_tradition` rules, the variant set must also intersect (so e.g.
+# `tradition=kerala` collapses Janmashtami to the Amanta/Smarta dates).
+#
+# The bag mixes axes deliberately: a state expands to its language(s),
+# region direction, calendar convention, and (where exclusive) sect, so
+# the single intersection check covers all four axes at once.
+#
+# Unknown values pass through verbatim so adding a new tag in SCOPES does
+# not require touching this map.
 REGION_TRADITIONS: dict[str, list[str]] = {
     "all":         [],
     "any":         [],
     "":            [],
+
+    # ---- Calendar conventions (variant axis) ----
     "purnimanta":  ["purnimanta"],
     "amanta":      ["amanta"],
-    # Devotional schools (currently only Janmashtami distinguishes these).
+
+    # ---- Devotional schools / sects ----
     "smarta":      ["smarta"],
     "vaishnava":   ["vaishnava"],
     "iskcon":      ["vaishnava"],
+    "shaiva":      ["shaiva"],
+    "shakta":      ["shakta"],
+    "jain":        ["jain"],
+    "sikh":        ["sikh", "punjab", "punjabi", "north", "purnimanta"],
+    "buddhist":    ["buddhist"],
+    "brahmin":     ["brahmin"],
+    "muslim":      ["muslim", "islamic"],
+    "islamic":     ["islamic", "muslim"],
+    "shia":        ["shia", "muslim", "islamic"],
+    "sunni":       ["sunni", "muslim", "islamic"],
+    "bangladesh":  ["bangladesh", "bengali", "east"],
 
-    # Cardinal directions
-    "north":     ["purnimanta"],
-    "northwest": ["purnimanta"],
-    "northeast": ["purnimanta"],
-    "east":      ["purnimanta"],
-    "central":   ["purnimanta"],
-    "south":     ["amanta"],
-    "west":      ["amanta"],
-    "southwest": ["amanta"],
-    "southeast": ["amanta"],
+    # ---- Cardinal directions ----
+    "north":     ["north", "purnimanta"],
+    "northwest": ["northwest", "north", "purnimanta"],
+    "northeast": ["northeast", "east", "purnimanta"],
+    "east":      ["east", "purnimanta"],
+    "central":   ["central", "purnimanta"],
+    "south":     ["south", "amanta"],
+    "west":      ["west", "amanta"],
+    "southwest": ["southwest", "west", "amanta"],
+    "southeast": ["southeast", "south", "amanta"],
 
-    # Purnimanta states (North / East / parts of Central India)
-    "bengal":          ["purnimanta"],
-    "west-bengal":     ["purnimanta"],
-    "westbengal":      ["purnimanta"],
-    "odisha":          ["purnimanta"],
-    "orissa":          ["purnimanta"],
-    "assam":           ["purnimanta"],
-    "bihar":           ["purnimanta"],
-    "jharkhand":       ["purnimanta"],
-    "up":              ["purnimanta"],
-    "uttar-pradesh":   ["purnimanta"],
-    "uttarpradesh":    ["purnimanta"],
-    "uttarakhand":     ["purnimanta"],
-    "delhi":           ["purnimanta"],
-    "haryana":         ["purnimanta"],
-    "punjab":          ["purnimanta"],
-    "himachal":        ["purnimanta"],
-    "himachal-pradesh":["purnimanta"],
-    "jammu":           ["purnimanta"],
-    "kashmir":         ["purnimanta"],
-    "rajasthan":       ["purnimanta"],
-    "mp":              ["purnimanta"],
-    "madhya-pradesh":  ["purnimanta"],
-    "madhyapradesh":   ["purnimanta"],
-    "chhattisgarh":    ["purnimanta"],
-    "sikkim":          ["purnimanta"],
-    "manipur":         ["purnimanta"],
-    "tripura":         ["purnimanta"],
-    "meghalaya":       ["purnimanta"],
-    "nagaland":        ["purnimanta"],
-    "arunachal":       ["purnimanta"],
-    "mizoram":         ["purnimanta"],
+    # ---- Language communities (deliberately overlap with states) ----
+    "tamil":     ["tamil", "tamil-nadu", "south", "amanta"],
+    "malayali":  ["malayali", "kerala", "south", "amanta"],
+    "telugu":    ["telugu", "andhra-pradesh", "telangana", "south", "amanta"],
+    "kannada":   ["kannada", "karnataka", "south", "amanta"],
+    "marathi":   ["marathi", "maharashtra", "konkani", "west", "amanta"],
+    "konkani":   ["konkani", "goa", "maharashtra", "west", "amanta"],
+    "gujarati":  ["gujarati", "gujarat", "west", "amanta"],
+    "sindhi":    ["sindhi"],
+    "punjabi":   ["punjabi", "punjab", "sikh", "north", "purnimanta"],
+    "bengali":   ["bengali", "bengal", "west-bengal", "east", "purnimanta"],
+    "oriya":     ["oriya", "odia", "odisha", "east", "purnimanta"],
+    "odia":      ["odia", "oriya", "odisha", "east", "purnimanta"],
+    "assamese":  ["assamese", "assam", "northeast", "east", "purnimanta"],
+    "bhojpuri":  ["bhojpuri", "bihar", "purvanchal", "east", "purnimanta"],
+    "maithili":  ["maithili", "bihar", "east", "purnimanta"],
 
-    # Amanta states (South / West India)
-    "maharashtra":    ["amanta"],
-    "gujarat":        ["amanta"],
-    "goa":            ["amanta"],
-    "karnataka":      ["amanta"],
-    "andhra":         ["amanta"],
-    "andhra-pradesh": ["amanta"],
-    "andhrapradesh":  ["amanta"],
-    "telangana":      ["amanta"],
-    "tamil-nadu":     ["amanta"],
-    "tamilnadu":      ["amanta"],
-    "tamilnadu-tn":   ["amanta"],
-    "kerala":         ["amanta"],
+    # ---- Sub-regions ----
+    "purvanchal": ["purvanchal", "bihar", "jharkhand", "up",
+                   "uttar-pradesh", "east", "purnimanta"],
+
+    # ---- Purnimanta states (North / East / parts of Central) ----
+    "bengal":          ["bengal", "west-bengal", "bengali", "east", "purnimanta"],
+    "west-bengal":     ["west-bengal", "bengal", "bengali", "east", "purnimanta"],
+    "westbengal":      ["west-bengal", "bengal", "bengali", "east", "purnimanta"],
+    "odisha":          ["odisha", "oriya", "odia", "east", "purnimanta"],
+    "orissa":          ["odisha", "oriya", "odia", "east", "purnimanta"],
+    "assam":           ["assam", "assamese", "northeast", "east", "purnimanta"],
+    "bihar":           ["bihar", "bhojpuri", "maithili", "purvanchal",
+                        "east", "purnimanta"],
+    "jharkhand":       ["jharkhand", "east", "purnimanta"],
+    "up":              ["up", "uttar-pradesh", "bhojpuri", "purvanchal",
+                        "north", "purnimanta"],
+    "uttar-pradesh":   ["uttar-pradesh", "up", "bhojpuri", "purvanchal",
+                        "north", "purnimanta"],
+    "uttarpradesh":    ["uttar-pradesh", "up", "north", "purnimanta"],
+    "uttarakhand":     ["uttarakhand", "north", "purnimanta"],
+    "delhi":           ["delhi", "north", "purnimanta"],
+    "haryana":         ["haryana", "north", "purnimanta"],
+    "punjab":          ["punjab", "punjabi", "sikh", "north", "purnimanta"],
+    "himachal":        ["himachal", "himachal-pradesh", "north", "purnimanta"],
+    "himachal-pradesh":["himachal-pradesh", "himachal", "north", "purnimanta"],
+    "jammu":           ["jammu", "kashmir", "north", "purnimanta"],
+    "kashmir":         ["kashmir", "jammu", "north", "purnimanta"],
+    "rajasthan":       ["rajasthan", "north", "purnimanta"],
+    "mp":              ["mp", "madhya-pradesh", "central", "purnimanta"],
+    "madhya-pradesh":  ["madhya-pradesh", "mp", "central", "purnimanta"],
+    "madhyapradesh":   ["madhya-pradesh", "mp", "central", "purnimanta"],
+    "chhattisgarh":    ["chhattisgarh", "central", "purnimanta"],
+    "sikkim":          ["sikkim", "northeast", "east", "purnimanta"],
+    "manipur":         ["manipur", "northeast", "east", "purnimanta"],
+    "tripura":         ["tripura", "northeast", "east", "purnimanta"],
+    "meghalaya":       ["meghalaya", "northeast", "east", "purnimanta"],
+    "nagaland":        ["nagaland", "northeast", "east", "purnimanta"],
+    "arunachal":       ["arunachal", "northeast", "east", "purnimanta"],
+    "mizoram":         ["mizoram", "northeast", "east", "purnimanta"],
+
+    # ---- Amanta states (South / West) ----
+    "maharashtra":    ["maharashtra", "marathi", "konkani", "west", "amanta"],
+    "gujarat":        ["gujarat", "gujarati", "west", "amanta"],
+    "goa":            ["goa", "konkani", "marathi", "west", "amanta"],
+    "karnataka":      ["karnataka", "kannada", "south", "amanta"],
+    "andhra":         ["andhra-pradesh", "telugu", "south", "amanta"],
+    "andhra-pradesh": ["andhra-pradesh", "telugu", "south", "amanta"],
+    "andhrapradesh":  ["andhra-pradesh", "telugu", "south", "amanta"],
+    "telangana":      ["telangana", "telugu", "south", "amanta"],
+    "tamil-nadu":     ["tamil-nadu", "tamil", "south", "amanta"],
+    "tamilnadu":      ["tamil-nadu", "tamil", "south", "amanta"],
+    "tamilnadu-tn":   ["tamil-nadu", "tamil", "south", "amanta"],
+    "kerala":         ["kerala", "malayali", "south", "amanta"],
 }
+
+
+def _scope_vocabulary() -> set[str]:
+    """Union of every tag the router knows how to resolve to. Used by the
+    boot-time validator to flag SCOPES entries with tags no caller could
+    ever query for (typos, vocabulary drift).
+    """
+    vocab: set[str] = set(REGION_TRADITIONS.keys())
+    for v in REGION_TRADITIONS.values():
+        vocab.update(v)
+    return vocab
+
+
+def validate_scope_vocabulary() -> dict[str, list[str]]:
+    """Cross-check the curated SCOPES map (in services/festival_rules_seed.py)
+    against the router's resolvable vocabulary. Returns a dict mapping
+    festival id -> list of unknown tags. Empty dict means clean.
+
+    Logs a WARNING for any unknown tag so vocabulary drift surfaces in
+    server logs at startup. Does NOT raise -- unknown tags still work
+    (the resolver passes them through verbatim) but a caller would have
+    to know the exact tag string to query for them.
+    """
+    import logging
+
+    try:
+        from backend.services.festival_rules_seed import SCOPES
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("scope validator: could not import SCOPES (%s)", exc)
+        return {}
+
+    vocab = _scope_vocabulary()
+    unknown: dict[str, list[str]] = {}
+    for fid, tags in SCOPES.items():
+        missing = [t for t in tags if t not in vocab]
+        if missing:
+            unknown[fid] = missing
+    if unknown:
+        for fid, missing in sorted(unknown.items()):
+            logging.warning(
+                "scope tag(s) not in router vocabulary for festival %r: %s",
+                fid, ", ".join(missing),
+            )
+    return unknown
+
+
+# Run validation at import time so the warnings show up on app boot.
+try:
+    validate_scope_vocabulary()
+except Exception:  # pragma: no cover
+    pass
 
 
 def _resolve_tradition_tags(value: str) -> list[str]:
@@ -145,11 +267,27 @@ def _resolve_tradition_tags(value: str) -> list[str]:
 
 
 def _filter_tradition(occ, tradition: str):
+    """Apply BOTH scope and variant filters using the same expanded tag bag.
+
+    * SCOPE filter (festival-level): drop the occurrence if the festival's
+      `scope_traditions` is non-empty and does not intersect the bag.
+      Universal festivals (empty scope) always pass.
+    * VARIANT filter (occurrence-level): drop the occurrence if its
+      `traditions` tuple is non-empty and does not intersect the bag.
+      Tradition-agnostic occurrences (empty variant) always pass.
+
+    With `tradition=all` (or unset) the bag is empty and BOTH filters are
+    bypassed -- every festival and every variant is returned.
+    """
     tags = _resolve_tradition_tags(tradition or "all")
     if not tags:
         return occ
-    tagset = set(tags)
-    return [o for o in occ if not o.traditions or tagset.intersection(o.traditions)]
+    bag = set(tags)
+    return [
+        o for o in occ
+        if (not o.scope_traditions or bag.intersection(o.scope_traditions))
+        and (not o.traditions or bag.intersection(o.traditions))
+    ]
 
 
 @router.get("")
@@ -163,6 +301,8 @@ def list_festivals(
     lat: float = LatQ,
     lon: float = LonQ,
     tz: str = TzQ,
+    ayanamsa: str = AyanamsaQ,
+    calendar_time: str = CalendarTimeQ,
 ):
     response.headers["Cache-Control"] = DEFAULT_CACHE_CONTROL
     today = datetime.now(ZoneInfo(tz)).date()
@@ -172,7 +312,7 @@ def list_festivals(
         last_day = monthrange(from_.year, from_.month)[1]
         to = from_.replace(day=last_day)
 
-    occ = festivals_in_range(from_, to, language=language, lat=lat, lon=lon, tz=tz)
+    occ = festivals_in_range(from_, to, language=language, lat=lat, lon=lon, tz=tz, ayanamsa=ayanamsa, calendar_time=calendar_time)
     occ = _filter_tradition(occ, tradition)
     if type:
         occ = [o for o in occ if (o.type or "") == type]
@@ -185,6 +325,11 @@ def list_festivals(
             "type": o.type,
             "auspiciousness": o.auspiciousness,
             "traditions": list(o.traditions),
+            "scope_traditions": list(o.scope_traditions),
+            "adhik_status": o.adhik_status,
+            "kshaya_label": o.kshaya_label,
+            "kollam_year": o.kollam_year,
+            "tamil_year": o.tamil_year,
         }
         for o in occ
     ]
@@ -199,14 +344,19 @@ def today_festivals(
     lat: float = LatQ,
     lon: float = LonQ,
     tz: str = TzQ,
+    ayanamsa: str = AyanamsaQ,
+    calendar_time: str = CalendarTimeQ,
 ):
     response.headers["Cache-Control"] = DEFAULT_CACHE_CONTROL
     today = date or datetime.now(ZoneInfo(tz)).date()
-    occ = festivals_in_range(today, today, language=language, lat=lat, lon=lon, tz=tz)
+    occ = festivals_in_range(today, today, language=language, lat=lat, lon=lon, tz=tz, ayanamsa=ayanamsa, calendar_time=calendar_time)
     occ = _filter_tradition(occ, tradition)
     return {"festivals": [
         {"id": o.festival_id, "name": o.name, "type": o.type,
-         "traditions": list(o.traditions)}
+         "traditions": list(o.traditions),
+         "scope_traditions": list(o.scope_traditions),
+         "adhik_status": o.adhik_status,
+         "kshaya_label": o.kshaya_label}
         for o in occ
     ]}
 
@@ -221,12 +371,14 @@ def upcoming(
     lat: float = LatQ,
     lon: float = LonQ,
     tz: str = TzQ,
+    ayanamsa: str = AyanamsaQ,
+    calendar_time: str = CalendarTimeQ,
 ):
     response.headers["Cache-Control"] = DEFAULT_CACHE_CONTROL
     start = from_ or datetime.now(ZoneInfo(tz)).date()
     days = {"7d": 7, "30d": 30, "90d": 90}[window]
     end = start + timedelta(days=days)
-    occ = festivals_in_range(start, end, language=language, lat=lat, lon=lon, tz=tz)
+    occ = festivals_in_range(start, end, language=language, lat=lat, lon=lon, tz=tz, ayanamsa=ayanamsa, calendar_time=calendar_time)
     occ = _filter_tradition(occ, tradition)
     return {"items": [
         {
@@ -236,6 +388,8 @@ def upcoming(
             "name": o.name,
             "type": o.type,
             "traditions": list(o.traditions),
+            "scope_traditions": list(o.scope_traditions),
+            "adhik_status": o.adhik_status,
         }
         for o in occ
     ]}
@@ -251,18 +405,22 @@ def calendar(
     lat: float = LatQ,
     lon: float = LonQ,
     tz: str = TzQ,
+    ayanamsa: str = AyanamsaQ,
+    calendar_time: str = CalendarTimeQ,
 ):
     response.headers["Cache-Control"] = DEFAULT_CACHE_CONTROL
     last = monthrange(year, month)[1]
     start = Date(year, month, 1)
     end = Date(year, month, last)
-    occ = festivals_in_range(start, end, language=language, lat=lat, lon=lon, tz=tz)
+    occ = festivals_in_range(start, end, language=language, lat=lat, lon=lon, tz=tz, ayanamsa=ayanamsa, calendar_time=calendar_time)
     occ = _filter_tradition(occ, tradition)
     by_day: dict[int, list[dict]] = {}
     for o in occ:
         by_day.setdefault(o.date.day, []).append(
             {"id": o.festival_id, "name": o.name, "type": o.type,
-             "traditions": list(o.traditions)}
+             "traditions": list(o.traditions),
+             "scope_traditions": list(o.scope_traditions),
+             "adhik_status": o.adhik_status}
         )
     return {
         "year": year, "month": month,
@@ -284,19 +442,21 @@ def festival_dates(
     year: int = Query(..., ge=1900, le=2100),
     include_children: bool = Query(
         True,
-        description="Include child/variant festivals (e.g. Diwali → Dhanteras, Govardhan, Bhai Dooj).",
+        description="Include child/variant festivals (e.g. Diwali â†’ Dhanteras, Govardhan, Bhai Dooj).",
     ),
     tradition: str = TraditionQ,
     language: str = LangQ,
     lat: float = LatQ,
     lon: float = LonQ,
     tz: str = TzQ,
+    ayanamsa: str = AyanamsaQ,
+    calendar_time: str = CalendarTimeQ,
 ):
     """All occurrences of a festival (and its variants) in the given year.
 
-    Useful for monthly festivals (Masik Shivaratri → 12 dates, Sankashti
-    Chaturthi → 12-13 dates, Ekadashi → 24-26 dates) and for festival
-    families with sub-events (Diwali → Dhanteras, Narak Chaturdashi,
+    Useful for monthly festivals (Masik Shivaratri â†’ 12 dates, Sankashti
+    Chaturthi â†’ 12-13 dates, Ekadashi â†’ 24-26 dates) and for festival
+    families with sub-events (Diwali â†’ Dhanteras, Narak Chaturdashi,
     Lakshmi Puja, Govardhan Puja, Bhai Dooj).
     """
     response.headers["Cache-Control"] = DEFAULT_CACHE_CONTROL
@@ -323,7 +483,7 @@ def festival_dates(
 
     start = Date(year, 1, 1)
     end = Date(year, 12, 31)
-    occ = festivals_in_range(start, end, language=language, lat=lat, lon=lon, tz=tz)
+    occ = festivals_in_range(start, end, language=language, lat=lat, lon=lon, tz=tz, ayanamsa=ayanamsa, calendar_time=calendar_time)
     occ = _filter_tradition(occ, tradition)
     occ = [o for o in occ if o.festival_id in ids]
 
@@ -335,6 +495,9 @@ def festival_dates(
                 "weekday": o.date.strftime("%a"),
                 "name": o.name,
                 "traditions": list(o.traditions),
+                "scope_traditions": list(o.scope_traditions),
+                "adhik_status": o.adhik_status,
+                "kshaya_label": o.kshaya_label,
             }
         )
 
@@ -347,7 +510,17 @@ def festival_dates(
                 "id": fid,
                 "name": dates[0]["name"] if dates else fid,
                 "count": len(dates),
-                "dates": [{"date": d["date"], "weekday": d["weekday"], "traditions": d["traditions"]} for d in dates],
+                "scope_traditions": dates[0]["scope_traditions"] if dates else [],
+                "dates": [
+                    {
+                        "date": d["date"],
+                        "weekday": d["weekday"],
+                        "traditions": d["traditions"],
+                        "adhik_status": d["adhik_status"],
+                        "kshaya_label": d["kshaya_label"],
+                    }
+                    for d in dates
+                ],
             }
             for fid, dates in sorted(grouped.items())
         ],
@@ -400,8 +573,10 @@ def festival_detail(festival_id: str, response: Response, language: str = LangQ)
         "type": f["type"],
         "auspiciousness": f["auspiciousness"],
         "thumbnail_url": f["thumbnail_url"],
+        "scope_traditions": json.loads(f["scope_traditions"]) if f["scope_traditions"] else [],
         "rule": {"type": f["rule_type"], "json": f["rule_json"]},
         "content": dict(c) if c else None,
         "rituals": rituals,
         "faqs": faqs,
     }
+

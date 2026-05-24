@@ -41,6 +41,25 @@ def ensure_content_schema() -> None:
     conn = connect_rw()
     try:
         conn.executescript(ddl)
+        _apply_migrations(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+# Idempotent ALTER TABLE migrations. `CREATE TABLE IF NOT EXISTS` in schema.sql
+# does NOT add new columns to a pre-existing table, so any new column added
+# after the first deployment must be applied here. Each entry checks the
+# current table info and only runs the ALTER when the column is missing.
+_MIGRATIONS: list[tuple[str, str, str]] = [
+    # (table, column, ALTER statement)
+    ("festivals", "scope_traditions",
+     "ALTER TABLE festivals ADD COLUMN scope_traditions TEXT"),
+]
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    for table, column, ddl_stmt in _MIGRATIONS:
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(ddl_stmt)

@@ -424,8 +424,15 @@ def _rise_or_set(jd_start: float, body: int, lon: float, lat: float, kind: str) 
     """
     Returns the JD (UT) of the next rise/set after jd_start, or None if none in 1 day.
     kind: 'rise' or 'set'.
+
+    Uses Drik Hindu rising convention (`BIT_HINDU_RISING`) so the instant
+    is upper-limb-on-apparent-horizon with standard refraction, matching
+    drikpanchang / Kalnirnay / AstroSage published times to ~30 seconds.
+    Without this flag, Swiss Ephemeris defaults to body-center crossing
+    which shifts sunrise/sunset by 2-4 minutes vs Drik almanacs.
     """
-    flag = swe.CALC_RISE if kind == "rise" else swe.CALC_SET
+    base = swe.CALC_RISE if kind == "rise" else swe.CALC_SET
+    flag = base | swe.BIT_HINDU_RISING
     # geopos is a single tuple (lon, lat, alt); atmo params default to standard sea-level.
     ret, tret = swe.rise_trans(
         jd_start,            # tjd_ut
@@ -436,6 +443,214 @@ def _rise_or_set(jd_start: float, body: int, lon: float, lat: float, kind: str) 
     if ret < 0:
         return None
     return tret[0]
+
+
+def find_rise_or_set(
+    jd_start: float, body: int, lon: float, lat: float, kind: str,
+    search_window_days: float = 1.0, backward_first: bool = False,
+) -> Optional[float]:
+    """Wider rise/set search.
+
+    `swe.rise_trans` looks forward in a fixed (~1 day) window. For bodies
+    that may rise less than once per day at a given latitude (the moon
+    rises ~50 minutes later each day; near new moon at high latitudes it
+    can skip a civil day), we widen the search to a ±24h window.
+
+    If `backward_first` is True we search forward from (jd_start - 1 day)
+    so a rise that occurred *just before* the requested start is captured.
+    Used by the festival snapshot to populate moonrise on days when the
+    moon technically rose just after midnight UTC but the search starts
+    at midnight local.
+    """
+    # Primary forward search.
+    primary = _rise_or_set(jd_start, body, lon, lat, kind)
+    if primary is not None and (primary - jd_start) <= search_window_days:
+        return primary
+    if backward_first:
+        backward = _rise_or_set(jd_start - 1.0, body, lon, lat, kind)
+        if backward is not None and backward >= jd_start - 1.0:
+            return backward
+    return primary
+
+
+# ---------------------------------------------------------------------------
+# Ayanamsa context manager (Drik vs Surya-Siddhanta vs Raman etc.)
+# ---------------------------------------------------------------------------
+
+_AYANAMSA_MODES: dict[str, int] = {
+    "lahiri":           swe.SIDM_LAHIRI,             # Indian Govt standard (default)
+    "lahiri_icrc":      getattr(swe, "SIDM_LAHIRI_ICRC", swe.SIDM_LAHIRI),
+    "raman":            swe.SIDM_RAMAN,              # B.V. Raman
+    "krishnamurti":     swe.SIDM_KRISHNAMURTI,       # KP astrology
+    "surya_siddhanta":  swe.SIDM_SURYASIDDHANTA,     # Bangladesh / classical Panjika
+    "true_citra":       swe.SIDM_TRUE_CITRA,         # Drik fine-tune (Chitra-paksha)
+    "yukteshwar":       swe.SIDM_YUKTESHWAR,
+    "fagan_bradley":    swe.SIDM_FAGAN_BRADLEY,      # Western sidereal
+}
+
+
+def supported_ayanamsa_modes() -> list[str]:
+    return sorted(_AYANAMSA_MODES.keys())
+
+
+class ayanamsa_mode:
+    """Context manager that switches Swiss Ephemeris ayanamsa for the
+    block, then restores Lahiri (module default).
+
+    pyswisseph's set_sid_mode is process-global, so this is not safe
+    across concurrent threads computing in different ayanamsas — but the
+    festival snapshot is built sequentially within one cache-miss and
+    the result is then cached, so contention is rare in practice.
+    """
+
+    def __init__(self, name: str | None) -> None:
+        self.name = (name or "lahiri").lower()
+
+    def __enter__(self) -> "ayanamsa_mode":
+        mode = _AYANAMSA_MODES.get(self.name, swe.SIDM_LAHIRI)
+        swe.set_sid_mode(mode, 0, 0)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        swe.set_sid_mode(swe.SIDM_LAHIRI, 0, 0)
+
+
+def tropical_sun_longitude(jd: float) -> float:
+    """Tropical (not sidereal) longitude of Sun. Used by tropical-event
+    rules: tropical equinox, tropical solstice (winter/summer)."""
+    lon, _ = swe.calc_ut(jd, swe.SUN, swe.FLG_SWIEPH)
+    return lon[0] % 360.0
+
+
+# ---------------------------------------------------------------------------
+# Hijri (Islamic lunar) calendar conversion
+# ---------------------------------------------------------------------------
+
+def gregorian_to_hijri(g_year: int, g_month: int, g_day: int) -> tuple[int, int, int]:
+    """Convert Gregorian → Hijri (Umm al-Qura tabular approximation).
+
+    Implements the classical arithmetic algorithm (Kuwaiti) used by
+    most ICCC printed calendars. Real lunar-sighting Hijri (used in
+    Saudi Arabia for Ramadan/Hajj) can shift by ±1 day from this
+    tabular value; downstream rules tag each occurrence as
+    `auspiciousness="approximate"` to reflect this uncertainty.
+    """
+    if (g_year, g_month, g_day) < (1582, 10, 15):
+        jd = (
+            367 * g_year
+            - (7 * (g_year + 5001 + (g_month - 9) // 7)) // 4
+            + (275 * g_month) // 9
+            + g_day
+            + 1729777
+        )
+    else:
+        jd = (
+            (1461 * (g_year + 4800 + (g_month - 14) // 12)) // 4
+            + (367 * (g_month - 2 - 12 * ((g_month - 14) // 12))) // 12
+            - (3 * ((g_year + 4900 + (g_month - 14) // 12) // 100)) // 4
+            + g_day
+            - 32075
+        )
+    l = jd - 1948440 + 10632
+    n = (l - 1) // 10631
+    l = l - 10631 * n + 354
+    j = (
+        ((10985 - l) // 5316) * ((50 * l) // 17719)
+        + (l // 5670) * ((43 * l) // 15238)
+    )
+    l = l - ((30 - j) // 15) * ((17719 * j) // 50) - (j // 16) * ((15238 * j) // 43) + 29
+    h_month = (24 * l) // 709
+    h_day = l - (709 * h_month) // 24
+    h_year = 30 * n + j - 30
+    return h_year, h_month, h_day
+
+
+def hijri_to_gregorian(h_year: int, h_month: int, h_day: int) -> date:
+    """Inverse of `gregorian_to_hijri` (tabular)."""
+    jd = (
+        (11 * h_year + 3) // 30
+        + 354 * h_year
+        + 30 * h_month
+        - (h_month - 1) // 2
+        + h_day
+        + 1948440
+        - 385
+    )
+    # JD → Gregorian (Fliegel & Van Flandern).
+    l = jd + 68569
+    n = (4 * l) // 146097
+    l = l - (146097 * n + 3) // 4
+    i = (4000 * (l + 1)) // 1461001
+    l = l - (1461 * i) // 4 + 31
+    j = (80 * l) // 2447
+    g_day = l - (2447 * j) // 80
+    l = j // 11
+    g_month = j + 2 - 12 * l
+    g_year = 100 * (n - 49) + i + l
+    return date(g_year, g_month, g_day)
+
+
+def gregorian_dates_for_hijri(year: int, h_month: int, h_day: int) -> list[date]:
+    """All Gregorian dates in `year` whose Hijri label is (h_month, h_day).
+
+    Because Hijri is shorter (~354 days) than Gregorian, some Hijri dates
+    fall TWICE in a Gregorian year (e.g. 1 Muharram 1446 + 1 Muharram 1447
+    both in 2025). Some fall ZERO times (rare; ~once per 33 years).
+    """
+    out: list[date] = []
+    for d in (date(year, 1, 1) - timedelta(days=15),
+              date(year, 12, 31) + timedelta(days=15)):
+        pass  # bounds only
+    # Walk every day; cheap enough (~380 iterations).
+    cur = date(year, 1, 1)
+    end = date(year, 12, 31)
+    while cur <= end:
+        hy, hm, hd = gregorian_to_hijri(cur.year, cur.month, cur.day)
+        if hm == h_month and hd == h_day:
+            out.append(cur)
+        cur += timedelta(days=1)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Kollam Era (Malayalam) & Tamil Jovian year
+# ---------------------------------------------------------------------------
+
+_TAMIL_YEAR_NAMES = [
+    "Prabhava", "Vibhava", "Shukla", "Pramodadhuta", "Prajotpatti",
+    "Angirasa", "Shrimukha", "Bhava", "Yuva", "Dhata",
+    "Ishvara", "Bahudhanya", "Pramathi", "Vikrama", "Vrisha",
+    "Chitrabhanu", "Svabhanu", "Tarana", "Parthiva", "Vyaya",
+    "Sarvajit", "Sarvadhari", "Virodhi", "Vikrita", "Khara",
+    "Nandana", "Vijaya", "Jaya", "Manmatha", "Durmukhi",
+    "Hevilambi", "Vilambi", "Vikari", "Sharvari", "Plava",
+    "Shubhakrit", "Shobhakrit", "Krodhi", "Vishvavasu", "Parabhava",
+    "Plavanga", "Kilaka", "Saumya", "Sadharana", "Virodhikrit",
+    "Paridhavi", "Pramadi", "Ananda", "Rakshasa", "Nala",
+    "Pingala", "Kalayukti", "Siddharthi", "Raudra", "Durmati",
+    "Dundubhi", "Rudhirodgari", "Raktakshi", "Krodhana", "Akshaya",
+]
+
+
+def kollam_era_year(g_date: date) -> int:
+    """Kollam Era (Malayalam calendar) year for the given Gregorian date.
+
+    New year falls on the first of Chingam (Aug 16/17, sun's ingress into
+    Simha). Epoch: 825 CE, so KE = CE - 824 from mid-August onward, else
+    CE - 825 in Jan-mid-Aug.
+    """
+    cutoff = date(g_date.year, 8, 17)
+    return g_date.year - 824 if g_date >= cutoff else g_date.year - 825
+
+
+def tamil_jovian_year(g_date: date) -> str:
+    """Tamil 60-year Jovian cycle name (Prabhava .. Akshaya) for the
+    given Gregorian date. Tamil New Year ~Apr 14 marks the rollover.
+    """
+    base_year = g_date.year if g_date >= date(g_date.year, 4, 14) else g_date.year - 1
+    # 2007-04-14 = Sarvajit (#21, 0-indexed 20). Index repeats every 60.
+    idx = (base_year - 2007 + 20) % 60
+    return _TAMIL_YEAR_NAMES[idx]
 
 def compute_sun_moon(local_date: date, lat: float, lon: float, tz: ZoneInfo) -> SunMoon:
     """
