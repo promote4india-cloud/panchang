@@ -1,18 +1,20 @@
 """
 Muhurat window calculations.
 
-Implements 9 muhurat windows:
-  Auspicious:    Brahma, Abhijit, Vijay, Godhuli, Amrit Kalam
-  Inauspicious:  Rahu Kaal, Yamaganda, Gulika Kaal, Dur Muhurat
+This module now exposes the classical 30-muhurta system for each civil date:
 
-All windows are derived from sunrise / sunset / next sunrise.
+- 15 daytime muhurtas: sunrise -> sunset
+- 15 nighttime muhurtas: sunset -> next sunrise
+
+Each muhurta includes sequence, transliterated Sanskrit name, Devanagari name,
+and category (auspicious/inauspicious).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date as Date, datetime, timedelta, time
-from typing import Literal
+from typing import Literal, cast
 from zoneinfo import ZoneInfo
 
 from .panchang import compute_sun_moon  # your existing fn
@@ -31,11 +33,20 @@ class MuhuratWindow:
     start: datetime  # tz-aware, local
     end: datetime    # tz-aware, local
     kind: Literal["auspicious", "inauspicious"]
+    sequence: int | None = None
+    sanskrit_name: str | None = None
+    sanskrit_devanagari: str | None = None
+    period: Literal["day", "night"] | None = None
 
     def to_dict(self) -> dict:
         return {
             "id": self.id,
+            "sequence": self.sequence,
             "name": self.name,
+            "sanskrit_name": self.sanskrit_name,
+            "sanskrit_devanagari": self.sanskrit_devanagari,
+            "category": self.kind,
+            "period": self.period,
             "start": self.start.strftime("%H:%M"),
             "end":   self.end.strftime("%H:%M"),
         }
@@ -43,14 +54,83 @@ class MuhuratWindow:
 
 @dataclass(frozen=True)
 class MuhuratBundle:
-    auspicious: list[MuhuratWindow]
-    inauspicious: list[MuhuratWindow]
+    muhurtas: list[MuhuratWindow]
 
     def to_dict(self) -> dict:
-        return {
-            "auspicious":   [w.to_dict() for w in self.auspicious],
-            "inauspicious": [w.to_dict() for w in self.inauspicious],
-        }
+        return {"muhurtas": [w.to_dict() for w in self.muhurtas]}
+
+
+_THIRTY_MUHURTA_DEFS: list[dict[str, str]] = [
+    {"id": "rudra", "name": "Rudra", "sanskrit": "Rudra", "devanagari": "रुद्र", "kind": "inauspicious"},
+    {"id": "ahi", "name": "Ahi", "sanskrit": "Ahi", "devanagari": "आहि", "kind": "inauspicious"},
+    {"id": "mitra", "name": "Mitra", "sanskrit": "Mitra", "devanagari": "मित्र", "kind": "auspicious"},
+    {"id": "pitri", "name": "Pitri", "sanskrit": "Pitri", "devanagari": "पितृ", "kind": "inauspicious"},
+    {"id": "vasu", "name": "Vasu", "sanskrit": "Vasu", "devanagari": "वसु", "kind": "auspicious"},
+    {"id": "varaha", "name": "Varaha", "sanskrit": "Varaha", "devanagari": "वाराह", "kind": "auspicious"},
+    {"id": "vishvedeva", "name": "Vishvedeva", "sanskrit": "Vishvedeva", "devanagari": "विश्वेदेव", "kind": "auspicious"},
+    {"id": "vidhi", "name": "Vidhi", "sanskrit": "Vidhi", "devanagari": "विधि", "kind": "auspicious"},
+    {"id": "sutamukhi", "name": "Sutamukhi", "sanskrit": "Sutamukhi", "devanagari": "सुतमुखी", "kind": "auspicious"},
+    {"id": "puruhuta", "name": "Puruhuta", "sanskrit": "Puruhuta", "devanagari": "पुरुहूत", "kind": "inauspicious"},
+    {"id": "vahini", "name": "Vahini", "sanskrit": "Vahini", "devanagari": "वाहिनी", "kind": "inauspicious"},
+    {"id": "naktanakara", "name": "Naktanakara", "sanskrit": "Naktanakara", "devanagari": "नक्तनकरा", "kind": "inauspicious"},
+    {"id": "varuna", "name": "Varuna", "sanskrit": "Varuna", "devanagari": "वरुण", "kind": "auspicious"},
+    {"id": "aryaman", "name": "Aryaman", "sanskrit": "Aryaman", "devanagari": "अर्यमन्", "kind": "auspicious"},
+    {"id": "bhaga", "name": "Bhaga", "sanskrit": "Bhaga", "devanagari": "भग", "kind": "inauspicious"},
+    {"id": "girisha", "name": "Girisha", "sanskrit": "Girisha", "devanagari": "गिरीश", "kind": "auspicious"},
+    {"id": "ajapada", "name": "Ajapada", "sanskrit": "Ajapada", "devanagari": "अजपाद", "kind": "inauspicious"},
+    {"id": "ahirbudhnya", "name": "Ahirbudhnya", "sanskrit": "Ahirbudhnya", "devanagari": "अहिर्बुध्न्य", "kind": "auspicious"},
+    {"id": "pushya", "name": "Pushya", "sanskrit": "Pushya", "devanagari": "पुष्य", "kind": "auspicious"},
+    {"id": "ashvini", "name": "Ashvini", "sanskrit": "Ashvini", "devanagari": "अश्विनी", "kind": "auspicious"},
+    {"id": "yama", "name": "Yama", "sanskrit": "Yama", "devanagari": "यम", "kind": "inauspicious"},
+    {"id": "agni", "name": "Agni", "sanskrit": "Agni", "devanagari": "अग्नि", "kind": "auspicious"},
+    {"id": "vidhatri", "name": "Vidhatri", "sanskrit": "Vidhatri", "devanagari": "विधातृ", "kind": "auspicious"},
+    {"id": "kanda", "name": "Kanda", "sanskrit": "Kanda", "devanagari": "कण्ड", "kind": "auspicious"},
+    {"id": "aditi", "name": "Aditi", "sanskrit": "Aditi", "devanagari": "अदिति", "kind": "auspicious"},
+    {"id": "jiva-amrita", "name": "Jiva-Amrita", "sanskrit": "Jiva/Amrita", "devanagari": "जीव/अमृत", "kind": "auspicious"},
+    {"id": "vishnu", "name": "Vishnu", "sanskrit": "Vishnu", "devanagari": "विष्णु", "kind": "auspicious"},
+    {"id": "dyumadgadyuti", "name": "Dyumadgadyuti", "sanskrit": "Dyumadgadyuti", "devanagari": "द्युमद्गद्युति", "kind": "auspicious"},
+    {"id": "brahma", "name": "Brahma", "sanskrit": "Brahma", "devanagari": "ब्रह्म", "kind": "auspicious"},
+    {"id": "samudra", "name": "Samudra", "sanskrit": "Samudra", "devanagari": "समुद्र", "kind": "auspicious"},
+]
+
+
+def _build_thirty_muhurta_windows(
+    sunrise: datetime,
+    sunset: datetime,
+    next_sunrise: datetime,
+) -> list[MuhuratWindow]:
+    day_span = sunset - sunrise
+    night_span = next_sunrise - sunset
+    day_unit = day_span / 15
+    night_unit = night_span / 15
+
+    out: list[MuhuratWindow] = []
+    for i, meta in enumerate(_THIRTY_MUHURTA_DEFS, start=1):
+        if i <= 15:
+            start = sunrise + day_unit * (i - 1)
+            end = sunrise + day_unit * i
+            period: Literal["day", "night"] = "day"
+        else:
+            n = i - 16
+            start = sunset + night_unit * n
+            end = sunset + night_unit * (n + 1)
+            period = "night"
+
+        out.append(
+            MuhuratWindow(
+                id=meta["id"],
+                name=meta["name"],
+                start=start,
+                end=end,
+                kind=cast(Literal["auspicious", "inauspicious"], meta["kind"]),
+                sequence=i,
+                sanskrit_name=meta["sanskrit"],
+                sanskrit_devanagari=meta["devanagari"],
+                period=period,
+            )
+        )
+
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +358,7 @@ def compute_muhurat(
     tz: str = "Asia/Kolkata",
 ) -> MuhuratBundle:
     """
-    Compute all 9 muhurat windows for a given date and location.
+    Compute the classical 30 muhurtas for a given date and location.
 
     Args:
         date: Civil date.
@@ -287,7 +367,7 @@ def compute_muhurat(
         tz:   IANA timezone string.
 
     Returns:
-        MuhuratBundle containing auspicious and inauspicious windows.
+        MuhuratBundle containing all 30 sequential muhurtas.
     """
     tzinfo = ZoneInfo(tz)
 
@@ -304,42 +384,21 @@ def compute_muhurat(
         else None
     )
 
-    if sunrise is None or sunset is None:
+    # 1b. Next sunrise (for 15 nighttime muhurtas)
+    sm_next = compute_sun_moon(date + timedelta(days=1), lat, lon, tzinfo)
+    next_sunrise = (
+        datetime.fromisoformat(sm_next.sunrise_local)
+        if sm_next.sunrise_local
+        else None
+    )
+
+    if sunrise is None or sunset is None or next_sunrise is None:
         raise ValueError(
-            f"No sunrise/sunset for {date} at ({lat},{lon}) — polar region?"
+            f"No sunrise/sunset/next-sunrise for {date} at ({lat},{lon}) - polar region?"
         )
 
-    # 2. Vedic weekday (Vedic day starts at sunrise; if 'now' is between
-    #    midnight and sunrise, the Vedic weekday is yesterday's).
-    weekday = _vedic_weekday(date)
-
-    # 3. Current nakshatra (for Amrit Kalam). We sample at solar noon.
-    midday = sunrise + (sunset - sunrise) / 2
-    jd_midday = to_julian_day(midday)
-    nak = compute_nakshatra(jd_midday, tzinfo)
-    nak_num = nak.index
-
-    # 4. Build all windows
-    auspicious = [
-        _brahma(sunrise),
-        _abhijit(sunrise, sunset),
-        _vijay(sunrise, sunset),
-        _godhuli(sunset),
-        _amrit_kalam(sunrise, sunset, nak_num),
-    ]
-
-    inauspicious = [
-        _rahu_kaal(sunrise, sunset, weekday),
-        _yamaganda(sunrise, sunset, weekday),
-        _gulika(sunrise, sunset, weekday),
-        *_dur_muhurat(sunrise, sunset, weekday),
-    ]
-
-    # Sort each list by start time for clean display
-    auspicious.sort(key=lambda w: w.start)
-    inauspicious.sort(key=lambda w: w.start)
-
-    return MuhuratBundle(auspicious=auspicious, inauspicious=inauspicious)
+    windows = _build_thirty_muhurta_windows(sunrise, sunset, next_sunrise)
+    return MuhuratBundle(muhurtas=windows)
 
 
 def compute_muhurat_by_id(
@@ -351,7 +410,7 @@ def compute_muhurat_by_id(
 ) -> MuhuratWindow | None:
     """Look up a single muhurat by id (powers GET /v1/muhurat/{id})."""
     bundle = compute_muhurat(date, lat, lon, tz)
-    for w in (*bundle.auspicious, *bundle.inauspicious):
+    for w in bundle.muhurtas:
         if w.id == muhurat_id:
             return w
     return None

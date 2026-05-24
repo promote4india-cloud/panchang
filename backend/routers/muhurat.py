@@ -1,14 +1,13 @@
 """
 Muhurat API endpoints.
 
-  GET /v1/muhurat            → all 9 windows for a date+location
+    GET /v1/muhurat            → all 30 classical muhurtas for a date+location
   GET /v1/muhurat/{id}       → single muhurat by id (for tap-through)
 """
 
 from __future__ import annotations
 
 from datetime import date as Date, datetime
-from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -27,20 +26,23 @@ router = APIRouter(prefix="/v1/muhurat", tags=["muhurat"])
 # ---------------------------------------------------------------------------
 
 class MuhuratWindowOut(BaseModel):
-    id: str = Field(..., examples=["abhijit"])
-    name: str = Field(..., examples=["Abhijit Muhurat"])
-    start: str = Field(..., examples=["11:42"], description="Local HH:MM")
-    end: str = Field(..., examples=["12:24"], description="Local HH:MM")
+    id: str = Field(..., examples=["rudra"])
+    sequence: int = Field(..., examples=[1], ge=1, le=30)
+    name: str = Field(..., examples=["Rudra"])
+    sanskrit_name: str = Field(..., examples=["Rudra"])
+    sanskrit_devanagari: str = Field(..., examples=["रुद्र"])
+    category: str = Field(..., examples=["inauspicious"])
+    period: str = Field(..., examples=["day"])
+    start: str = Field(..., examples=["06:00"], description="Local HH:MM")
+    end: str = Field(..., examples=["06:48"], description="Local HH:MM")
 
 
 class MuhuratBundleOut(BaseModel):
     date: Date
-    auspicious: list[MuhuratWindowOut]
-    inauspicious: list[MuhuratWindowOut]
+    muhurtas: list[MuhuratWindowOut]
 
 
 class MuhuratDetailOut(MuhuratWindowOut):
-    kind: Literal["auspicious", "inauspicious"]
     description: str | None = None
 
 
@@ -49,31 +51,15 @@ class MuhuratDetailOut(MuhuratWindowOut):
 # ---------------------------------------------------------------------------
 
 _DESCRIPTIONS: dict[str, str] = {
-    "brahma":    "The most sacred period before sunrise, ideal for meditation, "
-                 "spiritual practice, and study.",
-    "abhijit":   "The victorious muhurat centered on solar noon. Auspicious for "
-                 "starting important work — except travel toward the south.",
-    "vijay":     "Literally 'victory'. Favorable for any action requiring courage "
-                 "or strategic decisions.",
-    "godhuli":   "The 'cow-dust hour' around sunset. Sacred for weddings and "
-                 "religious ceremonies.",
-    "amrit":     "The nectar-like time of day, governed by the active nakshatra. "
-                 "All actions prosper.",
-    "rahu":      "Ruled by Rahu. Avoid starting new ventures, travel, or "
-                 "auspicious activities during this window.",
-    "yamaganda": "Ruled by Yama. Inauspicious for new beginnings; especially "
-                 "avoid travel and important meetings.",
-    "gulika":    "Ruled by Gulika (son of Saturn). Whatever is started during "
-                 "this period tends to repeat — avoid for one-time events.",
-    "dur":       "An unfavorable muhurta of the day. Postpone significant "
-                 "decisions.",
+    "rudra": "Classical muhurta associated with intensity and disruption; avoid major beginnings.",
+    "ahi": "Classical muhurta associated with instability; generally avoided for auspicious starts.",
+    "yama": "Classical muhurta associated with restraint and endings; avoid fresh undertakings.",
+    "brahma": "Highly regarded pre-dawn classical muhurta for spiritual practice and study.",
 }
 
 
 def _description_for(muhurat_id: str) -> str | None:
-    # Handles 'dur_1', 'dur_2' → 'dur'
-    base = muhurat_id.split("_", 1)[0]
-    return _DESCRIPTIONS.get(base)
+    return _DESCRIPTIONS.get(muhurat_id)
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +79,7 @@ LangQ = Query("en", min_length=2, max_length=5, description="ISO language code")
 @router.get(
     "",
     response_model=MuhuratBundleOut,
-    summary="All muhurat windows for a date + location",
+    summary="All 30 classical muhurtas for a date + location",
 )
 def get_muhurat(
     response: Response,
@@ -130,8 +116,7 @@ def get_muhurat(
 
     return MuhuratBundleOut(
         date=date,
-        auspicious=[MuhuratWindowOut(**w.to_dict()) for w in bundle.auspicious],
-        inauspicious=[MuhuratWindowOut(**w.to_dict()) for w in bundle.inauspicious],
+        muhurtas=[MuhuratWindowOut(**w.to_dict()) for w in bundle.muhurtas],
     )
 
 
@@ -169,8 +154,7 @@ def get_muhurat_by_id(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Unknown muhurat id: '{muhurat_id}'. "
-                   f"Valid ids: brahma, abhijit, vijay, godhuli, amrit, "
-                   f"rahu, yamaganda, gulika, dur (or dur_1, dur_2).",
+                   "Use GET /v1/muhurat to list all supported ids.",
         )
 
     response.headers["Cache-Control"] = (
@@ -179,6 +163,5 @@ def get_muhurat_by_id(
 
     return MuhuratDetailOut(
         **window.to_dict(),
-        kind=window.kind,
         description=_description_for(window.id),
     )

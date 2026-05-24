@@ -823,13 +823,26 @@ def seed_festival_rules() -> dict[str, int]:
             ).fetchone()
             if exists:
                 continue
+            parent_id = meta.get("parent_id")
+            if parent_id:
+                parent_exists = conn.execute(
+                    "SELECT 1 FROM festivals WHERE id = ?", (parent_id,)
+                ).fetchone()
+                if not parent_exists:
+                    parent_slug = parent_id.replace(".", "/")
+                    conn.execute(
+                        """INSERT OR IGNORE INTO festivals
+                               (id, parent_id, slug_path, kind, source_url)
+                               VALUES (?, NULL, ?, 'festival', ?)""",
+                        (parent_id, parent_slug, "synthetic://internal"),
+                    )
             conn.execute(
                 """INSERT INTO festivals
                        (id, parent_id, slug_path, kind, type, source_url)
                        VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     fid,
-                    meta.get("parent_id"),
+                    parent_id,
                     meta["slug_path"],
                     meta["kind"],
                     meta.get("type"),
