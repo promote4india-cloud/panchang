@@ -330,6 +330,8 @@ def list_festivals(
             "kshaya_label": o.kshaya_label,
             "kollam_year": o.kollam_year,
             "tamil_year": o.tamil_year,
+            "puja_muhurats": [m.to_dict() for m in o.puja_muhurats],
+            "primary": o.primary,
         }
         for o in occ
     ]
@@ -356,7 +358,9 @@ def today_festivals(
          "traditions": list(o.traditions),
          "scope_traditions": list(o.scope_traditions),
          "adhik_status": o.adhik_status,
-         "kshaya_label": o.kshaya_label}
+         "kshaya_label": o.kshaya_label,
+         "puja_muhurats": [m.to_dict() for m in o.puja_muhurats],
+         "primary": o.primary}
         for o in occ
     ]}
 
@@ -390,6 +394,8 @@ def upcoming(
             "traditions": list(o.traditions),
             "scope_traditions": list(o.scope_traditions),
             "adhik_status": o.adhik_status,
+            "puja_muhurats": [m.to_dict() for m in o.puja_muhurats],
+            "primary": o.primary,
         }
         for o in occ
     ]}
@@ -420,7 +426,9 @@ def calendar(
             {"id": o.festival_id, "name": o.name, "type": o.type,
              "traditions": list(o.traditions),
              "scope_traditions": list(o.scope_traditions),
-             "adhik_status": o.adhik_status}
+             "adhik_status": o.adhik_status,
+             "puja_muhurats": [m.to_dict() for m in o.puja_muhurats],
+             "primary": o.primary}
         )
     return {
         "year": year, "month": month,
@@ -498,6 +506,8 @@ def festival_dates(
                 "scope_traditions": list(o.scope_traditions),
                 "adhik_status": o.adhik_status,
                 "kshaya_label": o.kshaya_label,
+                "puja_muhurats": [m.to_dict() for m in o.puja_muhurats],
+                "primary": o.primary,
             }
         )
 
@@ -518,6 +528,8 @@ def festival_dates(
                         "traditions": d["traditions"],
                         "adhik_status": d["adhik_status"],
                         "kshaya_label": d["kshaya_label"],
+                        "puja_muhurats": d["puja_muhurats"],
+                        "primary": d["primary"],
                     }
                     for d in dates
                 ],
@@ -529,7 +541,25 @@ def festival_dates(
 
 
 @router.get("/{festival_id}")
-def festival_detail(festival_id: str, response: Response, language: str = LangQ):
+@router.get("/{festival_id}")
+def festival_detail(
+    festival_id: str,
+    response: Response,
+    language: str = LangQ,
+    date: Date | None = Query(
+        None,
+        description=(
+            "Optional civil date to compute puja_muhurats for this "
+            "festival. When omitted, response contains only editorial "
+            "content (no muhurat windows)."
+        ),
+    ),
+    lat: float = LatQ,
+    lon: float = LonQ,
+    tz: str = TzQ,
+    ayanamsa: str = AyanamsaQ,
+    calendar_time: str = CalendarTimeQ,
+):
     response.headers["Cache-Control"] = DEFAULT_CACHE_CONTROL
     conn = connect_ro()
     try:
@@ -565,7 +595,7 @@ def festival_detail(festival_id: str, response: Response, language: str = LangQ)
     finally:
         conn.close()
 
-    return {
+    result = {
         "id": f["id"],
         "slug_path": f["slug_path"],
         "parent_id": f["parent_id"],
@@ -579,4 +609,29 @@ def festival_detail(festival_id: str, response: Response, language: str = LangQ)
         "rituals": rituals,
         "faqs": faqs,
     }
+    if date is not None:
+        # Resolve the festival's occurrence on (or nearest to) `date`
+        # within ±45 days, then attach puja_muhurats.
+        from datetime import timedelta
+        window_start = date - timedelta(days=45)
+        window_end = date + timedelta(days=45)
+        occ_window = festivals_in_range(
+            window_start, window_end, language=language,
+            lat=lat, lon=lon, tz=tz, ayanamsa=ayanamsa,
+            calendar_time=calendar_time,
+        )
+        match = next(
+            (o for o in occ_window if o.festival_id == festival_id and o.date == date),
+            None,
+        )
+        if match is None:
+            # Fall back to nearest occurrence within the window.
+            same_id = [o for o in occ_window if o.festival_id == festival_id]
+            if same_id:
+                match = min(same_id, key=lambda o: abs((o.date - date).days))
+        result["date"] = match.date.isoformat() if match else date.isoformat()
+        result["puja_muhurats"] = (
+            [m.to_dict() for m in match.puja_muhurats] if match else []
+        )
+    return result
 

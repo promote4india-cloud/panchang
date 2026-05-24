@@ -86,6 +86,7 @@ from .panchang import (
 )
 import swisseph as swe
 from .panchang import _rise_or_set, find_rise_or_set  # type: ignore[attr-defined]
+from .puja_muhurat import compute_puja_muhurats
 
 # ---------------------------------------------------------------------------
 # Lookups
@@ -1121,15 +1122,20 @@ def _match_day(rule_type: str, rule: dict, snap: _DaySnap) -> bool:
 def _resolve_with_traditions(
     rule_type: str, rule: dict, snaps: list[_DaySnap], year: int,
     tz: str = "Asia/Kolkata",
-) -> list[tuple[Date, str | None]]:
-    """Resolve a rule into [(date, tradition_tag)].
+) -> list[tuple[Date, str | None, bool]]:
+    """Resolve a rule into [(date, tradition_tag, is_secondary)].
+
+    `is_secondary` is True only for dates added by
+    `pin_extends_to_next_sunrise` (the next-sunrise candidate in a
+    pradosha-vyapini tithi split). UI callers may hide secondaries by
+    default to show a single canonical Drik date.
 
     For `multi_tradition`, runs each child observance independently and
     tags emissions with the observance's `tradition` label. For every
     other rule type, returns dates with tag=None (tradition-agnostic).
     """
     if rule_type == "multi_tradition":
-        out: list[tuple[Date, str | None]] = []
+        out: list[tuple[Date, str | None, bool]] = []
         for obs in rule.get("observances", []):
             sub_type = obs.get("rule_type")
             sub_rule = obs.get("rule", {})
@@ -1144,11 +1150,16 @@ def _resolve_with_traditions(
                 tags = [str(t) for t in tag if t]
             else:
                 tags = [tag] if tag else [None]
-            for d in _resolve_against_snapshot(sub_type, sub_rule, snaps, year, tz):
+            dates = _resolve_against_snapshot(sub_type, sub_rule, snaps, year, tz)
+            secondary = sub_rule.get("__secondary_dates__") or set()
+            for d in dates:
+                is_sec = d in secondary
                 for t in tags:
-                    out.append((d, t))
+                    out.append((d, t, is_sec))
         return out
-    return [(d, None) for d in _resolve_against_snapshot(rule_type, rule, snaps, year, tz)]
+    dates = _resolve_against_snapshot(rule_type, rule, snaps, year, tz)
+    secondary = rule.get("__secondary_dates__") or set()
+    return [(d, None, d in secondary) for d in dates]
 
 
 def _solar_ingress_datetime(
@@ -1402,6 +1413,11 @@ def _resolve_against_snapshot(
                 existing.add(d_next)
         if added:
             matched = sorted(set(matched) | set(added))
+            # Side-channel: tell the caller which dates were added by the
+            # next-sunrise extension. These are SECONDARY candidates --
+            # the canonical Drik date is the pradosha day itself. UI may
+            # choose to hide secondaries by default.
+            rule["__secondary_dates__"] = set(added)
     # `prefer_nakshatra_at_nishitha`: among matched candidate days, if
     # ANY day has the specified nakshatra prevailing at NISHITHA, narrow
     # the result to only those days. Otherwise leave `matched` unchanged
@@ -1569,6 +1585,16 @@ class FestivalOccurrence:
     # Tamil 60-year Jovian cycle name (Prabhava .. Akshaya); empty
     # string = not computed.
     tamil_year: str = ""
+    # Festival-specific worship windows (Lakshmi Puja Muhurat, Nishita
+    # Kaal, Moonrise Puja, etc.). Empty tuple for festivals without a
+    # registered puja-muhurat builder.
+    puja_muhurats: tuple = ()
+    # `primary` is False only for secondary candidate dates emitted by
+    # `pin_extends_to_next_sunrise` (Drik split: pradosha-day vs next-
+    # sunrise day for Amavasya/Trayodashi-vyapini observances). The
+    # canonical Drik date is always `primary=True`; UI may hide
+    # secondaries by default.
+    primary: bool = True
 
 
 def festivals_in_range(
@@ -1629,14 +1655,19 @@ def festivals_in_range(
         except json.JSONDecodeError:
             continue
         for year, snaps in snapshots.items():
-            for d, trad in _resolve_with_traditions(r["rule_type"], rule, snaps, year, tz_spec):
+            for d, trad, is_sec in _resolve_with_traditions(r["rule_type"], rule, snaps, year, tz_spec):
                 if not (start <= d <= end):
                     continue
                 key = (r["id"], d)
                 entry = merged.get(key)
                 if entry is None:
-                    entry = {"row": r, "traditions": []}
+                    entry = {"row": r, "traditions": [], "is_secondary": is_sec}
                     merged[key] = entry
+                else:
+                    # If any tradition emits this date as primary, the
+                    # combined occurrence is primary.
+                    if not is_sec:
+                        entry["is_secondary"] = False
                 if trad and trad not in entry["traditions"]:
                     entry["traditions"].append(trad)
 
@@ -1670,6 +1701,10 @@ def festivals_in_range(
     for k, v in merged.items():
         d = k[1]
         adhik_status, kshaya_label = _adhik_for(d, v["row"]["rule_type"])
+        snap = snap_by_date.get(d)
+        muhurats = tuple(
+            compute_puja_muhurats(v["row"]["id"], d, snap, lat, lon, tz)
+        ) if snap is not None else ()
         out.append(
             FestivalOccurrence(
                 festival_id=v["row"]["id"],
@@ -1684,6 +1719,8 @@ def festivals_in_range(
                 kshaya_label=kshaya_label,
                 kollam_year=kollam_era_year(d),
                 tamil_year=tamil_jovian_year(d),
+                puja_muhurats=muhurats,
+                primary=not v.get("is_secondary", False),
             )
         )
     out.sort(key=lambda o: (o.date, o.festival_id))
