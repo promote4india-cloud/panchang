@@ -207,6 +207,74 @@ CREATE INDEX IF NOT EXISTS idx_festival_snapshot_updated
     ON festival_year_snapshots(updated_at);
 
 -- ---------------------------------------------------------------------------
+-- 11b. Horoscope predictions (sign × period × language × period_key).
+--      Populated lazily by services/horoscope.py — on a cache miss the
+--      service scrapes the matching www.astrosage.com page, parses, and
+--      UPSERTs here. Subsequent reads (and every read across processes)
+--      hit this table without going to the wire.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS horoscope_predictions (
+    sign          TEXT NOT NULL,           -- 'aries'..'pisces'
+    period        TEXT NOT NULL,           -- 'daily'|'tomorrow'|'weekly'|'weekly_love'|'monthly'|'next_month'|'yearly'
+    language      TEXT NOT NULL,           -- 'en','hi',...
+    -- period_key buckets a prediction to its calendar window:
+    --   daily/tomorrow → 'YYYY-MM-DD'
+    --   weekly/weekly_love → 'YYYY-Www' (ISO week)
+    --   monthly/next_month → 'YYYY-MM'
+    --   yearly → 'YYYY'
+    period_key    TEXT NOT NULL,
+    date_label    TEXT,                    -- raw label scraped from astrosage (e.g. 'Monday, May 25, 2026')
+    prediction    TEXT,                    -- primary body (General section for monthly/yearly)
+    love          TEXT,
+    career        TEXT,
+    finance       TEXT,
+    health        TEXT,
+    family        TEXT,
+    advice        TEXT,
+    -- JSON-encoded 6-key dict of 0..5 star ratings, only set for daily/tomorrow:
+    -- {"health":4,"wealth":5,"family":5,"love_matters":1,"occupation":1,"married_life":1}
+    ratings_json  TEXT,
+    source_url    TEXT NOT NULL,
+    scraped_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (sign, period, language, period_key)
+);
+CREATE INDEX IF NOT EXISTS idx_horoscope_scraped_at
+    ON horoscope_predictions(scraped_at);
+
+-- ---------------------------------------------------------------------------
+-- 11c. Zodiac sign editorial PROSE per language. Populated lazily from
+--      www.astrosage.com/horoscope/{sign}.asp on first read of
+--      GET /v1/reference/zodiac-signs/{id}.
+--
+--      Structural fields (name, vedic_name, symbol, date_range, lord) are
+--      NOT stored here — they live in Python constants and are merged into
+--      the API response at read time. Only fields the scrape produces are
+--      persisted, keeping a single source of truth per field.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS zodiac_signs (
+    id                  TEXT NOT NULL,     -- 'aries'..'pisces'
+    language            TEXT NOT NULL,
+    -- From www.astrosage.com/horoscope/{sign}.asp (sign_intro parser):
+    summary             TEXT,              -- "What is <Sign> Sign?" body / lead paragraph(s)
+    traits              TEXT,
+    love                TEXT,
+    compatibility       TEXT,
+    -- From www.astrosage.com/horoscope/daily-{sign}-horoscope.asp (horoscope
+    -- parser's deep-dive extractor). Filled opportunistically whenever the
+    -- daily horoscope is scraped for this sign × language; safe to be NULL
+    -- if only sign_intro has been fetched so far.
+    overview            TEXT,              -- "<Sign> Zodiac Sign" body
+    physical_appearance TEXT,
+    mental_ability      TEXT,
+    characteristics     TEXT,
+    aspects_of_life     TEXT,              -- "What does <Sign> sign signify in various aspects of life?"
+    twelve_houses       TEXT,              -- "What do all 12 houses signify for <Sign> born?"
+    source_url          TEXT NOT NULL,
+    scraped_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (id, language)
+);
+
+-- ---------------------------------------------------------------------------
 -- 12. GeoNames location tables (used by services/locations.py).
 --     Source of truth for /v1/locations/{search,resolve,{id}}.
 --     The build pipeline (locations.build_database) explicitly DROPs these

@@ -11,7 +11,7 @@ Catalogs are pure constants, served with a long Cache-Control window.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, HTTPException, Path, Query, Response
 
 from backend.services.cache import DEFAULT_CACHE_CONTROL
 from backend.services.panchang import (
@@ -19,10 +19,13 @@ from backend.services.panchang import (
     NAKSHATRA_ELEMENTS,
     NAKSHATRA_NAMES,
     NAKSHATRA_SYMBOLS,
-    RASHI_LORDS,
-    RASHI_NAMES,
     TITHI_LORDS,
     TITHI_NAMES,
+)
+from backend.services.zodiac import (
+    SIGN_IDS,
+    get_zodiac_sign,
+    zodiac_index,
 )
 
 router = APIRouter(prefix="/v1/reference", tags=["reference"])
@@ -89,50 +92,45 @@ def get_nakshatras(response: Response) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Zodiac signs (12) — Vedic (sidereal) names + Western tropical date ranges.
-# The date ranges are tropical (Western) because that's what end users
-# recognize for horoscope screens; lord follows the Vedic rashi mapping.
+# Zodiac signs (12).
+#   GET /zodiac-signs       -> static catalog (structural fields only)
+#   GET /zodiac-signs/{id}  -> structural + prose; prose is lazy-scraped
+#                              from astrosage on first read per (id, lang)
+# Structural source of truth lives in services/zodiac.py; the prose-only
+# DB table (`zodiac_signs`) is filled on demand and merged in.
 # ---------------------------------------------------------------------------
 
-_ZODIAC_WESTERN = [
-    ("Aries",       "Mar 21 – Apr 19", "♈"),
-    ("Taurus",      "Apr 20 – May 20", "♉"),
-    ("Gemini",      "May 21 – Jun 20", "♊"),
-    ("Cancer",      "Jun 21 – Jul 22", "♋"),
-    ("Leo",         "Jul 23 – Aug 22", "♌"),
-    ("Virgo",       "Aug 23 – Sep 22", "♍"),
-    ("Libra",       "Sep 23 – Oct 22", "♎"),
-    ("Scorpio",     "Oct 23 – Nov 21", "♏"),
-    ("Sagittarius", "Nov 22 – Dec 21", "♐"),
-    ("Capricorn",   "Dec 22 – Jan 19", "♑"),
-    ("Aquarius",    "Jan 20 – Feb 18", "♒"),
-    ("Pisces",      "Feb 19 – Mar 20", "♓"),
-]
-
-
-def _build_zodiac_signs() -> list[dict]:
-    items: list[dict] = []
-    for i, (western, range_str, symbol) in enumerate(_ZODIAC_WESTERN):
-        items.append(
-            {
-                "index": i + 1,
-                "name": western,
-                "vedic_name": RASHI_NAMES[i],
-                "symbol": symbol,
-                "date_range": range_str,
-                "lord": RASHI_LORDS[i],
-            }
-        )
-    return items
-
-
-_ZODIAC = _build_zodiac_signs()
+_ZODIAC = zodiac_index()
+_SIGN_PATTERN = "^(" + "|".join(SIGN_IDS) + ")$"
 
 
 @router.get("/zodiac-signs", summary="Static catalog of 12 zodiac signs")
 def get_zodiac_signs(response: Response) -> dict:
     response.headers["Cache-Control"] = _STATIC_CACHE_CONTROL
     return {"items": _ZODIAC}
+
+
+@router.get(
+    "/zodiac-signs/{sign_id}",
+    summary="Single zodiac sign — structural fields + lazy-scraped prose",
+)
+async def get_zodiac_sign_detail(
+    response: Response,
+    sign_id: str = Path(..., pattern=_SIGN_PATTERN, description="Zodiac sign id (lowercase English)."),
+    language: str = Query("en", min_length=2, max_length=5),
+    force: bool = Query(
+        False,
+        description=(
+            "Bypass the DB cache and re-scrape prose fields from astrosage. "
+            "Respects the 1 req/s polite throttle."
+        ),
+    ),
+) -> dict:
+    response.headers["Cache-Control"] = DEFAULT_CACHE_CONTROL
+    merged = await get_zodiac_sign(sign_id=sign_id, language=language, force=force)
+    if merged is None:
+        raise HTTPException(404, f"Unknown zodiac sign: {sign_id!r}")
+    return merged
 
 
 # ---------------------------------------------------------------------------

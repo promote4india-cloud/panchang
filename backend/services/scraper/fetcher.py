@@ -32,7 +32,10 @@ import httpx
 
 from ..db import connect_ro, connect_rw
 
-Scope = Literal["festival", "muhurat", "festival_list", "muhurat_list"]
+Scope = Literal[
+    "festival", "muhurat", "festival_list", "muhurat_list",
+    "horoscope", "horoscope_list",
+]
 
 DEFAULT_HEADERS = {
     "User-Agent": "PanchangApp-Scraper/0.1 (+contact: dev@example.com)",

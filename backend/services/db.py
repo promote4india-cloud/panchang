@@ -55,6 +55,20 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     # (table, column, ALTER statement)
     ("festivals", "scope_traditions",
      "ALTER TABLE festivals ADD COLUMN scope_traditions TEXT"),
+    ("horoscope_predictions", "ratings_json",
+     "ALTER TABLE horoscope_predictions ADD COLUMN ratings_json TEXT"),
+    ("zodiac_signs", "overview",
+     "ALTER TABLE zodiac_signs ADD COLUMN overview TEXT"),
+    ("zodiac_signs", "physical_appearance",
+     "ALTER TABLE zodiac_signs ADD COLUMN physical_appearance TEXT"),
+    ("zodiac_signs", "mental_ability",
+     "ALTER TABLE zodiac_signs ADD COLUMN mental_ability TEXT"),
+    ("zodiac_signs", "characteristics",
+     "ALTER TABLE zodiac_signs ADD COLUMN characteristics TEXT"),
+    ("zodiac_signs", "aspects_of_life",
+     "ALTER TABLE zodiac_signs ADD COLUMN aspects_of_life TEXT"),
+    ("zodiac_signs", "twelve_houses",
+     "ALTER TABLE zodiac_signs ADD COLUMN twelve_houses TEXT"),
 ]
 
 
@@ -63,3 +77,34 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:
             conn.execute(ddl_stmt)
+    _drop_legacy_zodiac_signs(conn)
+
+
+def _drop_legacy_zodiac_signs(conn: sqlite3.Connection) -> None:
+    """The first iteration of zodiac_signs duplicated structural fields
+    (name, dates, lord, element, symbol) that now live in Python constants
+    in routers/reference.py. Drop the legacy table so the narrower
+    CREATE TABLE IF NOT EXISTS in schema.sql can take effect on next boot.
+    Safe: the table is only ever populated lazily by services/zodiac.py
+    and never read by anything outside that service.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(zodiac_signs)")}
+    if not cols:
+        return  # table doesn't exist yet; nothing to do
+    if "name" in cols or "dates" in cols or "lord" in cols:
+        conn.execute("DROP TABLE zodiac_signs")
+        conn.executescript(
+            """
+            CREATE TABLE zodiac_signs (
+                id            TEXT NOT NULL,
+                language      TEXT NOT NULL,
+                summary       TEXT,
+                traits        TEXT,
+                love          TEXT,
+                compatibility TEXT,
+                source_url    TEXT NOT NULL,
+                scraped_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (id, language)
+            );
+            """
+        )
