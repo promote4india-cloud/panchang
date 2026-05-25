@@ -877,6 +877,7 @@ class Panchang:
     nakshatra: NakshatraInfo
     yoga: YogaInfo
     karana: KaranaInfo
+    masa: MasaInfo
     rashi: RashiInfo
     sun_moon: SunMoon
     hindu_month_and_year: HinduMonthYearInfo
@@ -902,6 +903,7 @@ def compute_panchang(local_date: date, lat: float, lon: float, tz_name: str) -> 
     nak = compute_nakshatra(jd_ref, tz)
     yoga = compute_yoga(jd_ref, tz)
     karana = compute_karana(jd_ref, tz)
+    masa = compute_masa(jd_ref)
     rashi = compute_rashi(jd_ref)
     hindu_month_and_year = compute_hindu_month_year_info(local_date, jd_ref, tz, lat, lon, sm, tithi)
 
@@ -914,6 +916,7 @@ def compute_panchang(local_date: date, lat: float, lon: float, tz_name: str) -> 
         nakshatra=nak,
         yoga=yoga,
         karana=karana,
+        masa=masa,
         rashi=rashi,
         sun_moon=sm,
         hindu_month_and_year=hindu_month_and_year,
@@ -929,6 +932,7 @@ def panchang_to_dict(p: Panchang) -> dict:
         "nakshatra": asdict(p.nakshatra),
         "yoga": asdict(p.yoga),
         "karana": asdict(p.karana),
+        "masa": asdict(p.masa),
         "rashi": asdict(p.rashi),
         "sun_moon": asdict(p.sun_moon),
         "hindu_month_and_year": asdict(p.hindu_month_and_year),

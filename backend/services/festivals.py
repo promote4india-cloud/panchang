@@ -59,6 +59,7 @@ are instant.
 
 from __future__ import annotations
 
+import gzip
 import json
 import gzip
 from dataclasses import asdict, dataclass
@@ -67,6 +68,7 @@ from typing import Iterable
 from zoneinfo import ZoneInfo
 
 from .cache import ttl_cache
+from .db import connect_ro, connect_rw
 from .db import connect_ro, connect_rw
 from .panchang import (
     compute_karana,

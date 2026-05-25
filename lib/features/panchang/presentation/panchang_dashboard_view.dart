@@ -1,432 +1,661 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+
 import '../../../constants/app_colors.dart';
 import '../../../constants/app_themes.dart';
+import '../models/panchang_models.dart';
+import '../providers/panchang_providers.dart';
 
-class PanchangDashboardView extends StatelessWidget {
-  const PanchangDashboardView({super.key});
+class PanchangDashboardView extends ConsumerWidget {
+	const PanchangDashboardView({super.key});
 
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      // Padding tailored to clear the bottom navigation dock area
-      padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 24.0, bottom: 120.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // --- Hero Date Header ---
-          Text(
-            '16 May 2026 | Tuesday',
-            textAlign: TextAlign.center,
-            style: AppThemes.headlineLgMobile,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Vaishakha Shukla Tritiya',
-            textAlign: TextAlign.center,
-            style: AppThemes.headlineMd.copyWith(color: AppColors.primary),
-          ),
-          const SizedBox(height: 24),
+	@override
+	Widget build(BuildContext context, WidgetRef ref) {
+		final dashboard = ref.watch(panchangDashboardProvider);
 
-          // --- Festival Today Card (Highlight) ---
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.primaryContainer.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.primaryContainer.withOpacity(0.3)),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.primaryContainer.withOpacity(0.15),
-                  blurRadius: 20,
-                  offset: const Offset(0, 4),
-                )
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: const BoxDecoration(
-                    color: AppColors.primaryContainer,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(LucideIcons.partyPopper, color: Colors.white, size: 24),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Festival Today', style: AppThemes.labelMd),
-                      Text(
-                        'Parshurama Jayanti',
-                        style: AppThemes.headlineMd.copyWith(color: AppColors.onPrimaryContainer, fontSize: 20),
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(LucideIcons.chevronRight, color: AppColors.primaryContainer),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
+		return dashboard.when(
+			data: (vm) => SingleChildScrollView(
+				padding: const EdgeInsets.only(left: 16, right: 16, top: 20, bottom: 140),
+				child: Column(
+					crossAxisAlignment: CrossAxisAlignment.stretch,
+					children: [
+						Center(
+							child: Column(
+								children: [
+									Text(
+										vm.dateLabel,
+										style: AppThemes.bodyMd.copyWith(
+											fontWeight: FontWeight.w600,
+											color: AppColors.onSurface,
+										),
+									),
+									const SizedBox(height: 6),
+									Text(
+										vm.lunarLabel,
+										style: AppThemes.bodyMd.copyWith(
+											fontWeight: FontWeight.bold,
+											color: AppColors.primary,
+										),
+									),
+								],
+							),
+						),
+						if (vm.festivalTitle.trim().isEmpty)
+							const SizedBox(height: 12),
+						if (vm.festivalTitle.trim().isNotEmpty) ...[
+							const SizedBox(height: 16),
+							_FestivalCard(title: vm.festivalTitle),
+							const SizedBox(height: 16),
+						],
+						Row(
+							children: [
+								Expanded(
+									child: _InfoTile(
+										title: 'Tithi',
+										value: vm.tithiLabel,
+										icon: LucideIcons.moon,
+									),
+								),
+								const SizedBox(width: 12),
+								Expanded(
+									child: _InfoTile(
+										title: 'Sunrise',
+										value: vm.sunriseLabel,
+										icon: LucideIcons.sun,
+									),
+								),
+							],
+						),
+						const SizedBox(height: 12),
+						Row(
+							children: [
+								Expanded(
+									child: _InfoTile(
+										title: 'Nakshatra',
+										value: vm.nakshatraLabel,
+										icon: LucideIcons.sparkles,
+									),
+								),
+								const SizedBox(width: 12),
+								Expanded(
+									child: _InfoTile(
+										title: 'Sunset',
+										value: vm.sunsetLabel,
+										icon: LucideIcons.moon,
+									),
+								),
+							],
+						),
+						const SizedBox(height: 20),
+						Text(
+							'Muhurat Timings',
+							style: AppThemes.headlineSm,
+						),
+						const SizedBox(height: 10),
+						_MuhuratScroller(
+							title: 'Auspicious',
+							items: vm.auspiciousMuhurats,
+							isPositive: true,
+						),
+						const SizedBox(height: 12),
+						_MuhuratScroller(
+							title: 'Inauspicious',
+							items: vm.inauspiciousMuhurats,
+							isPositive: false,
+						),
+						const SizedBox(height: 22),
+						_SectionHeader(title: 'Daily Rashifal', actionText: 'View All'),
+						const SizedBox(height: 10),
+						_RashifalCard(
+							sign: vm.rashifalSign,
+							text: vm.rashifalText,
+							symbol: vm.rashifalSymbol,
+						),
+						const SizedBox(height: 22),
+						_SectionHeader(title: 'Upcoming Events'),
+						const SizedBox(height: 10),
+						_UpcomingEventCard(
+							dateLabel: vm.upcomingDateLabel,
+							name: vm.upcomingName,
+							cta: 'Set Reminder',
+						),
+						const SizedBox(height: 18),
+						_AstroInsightCard(
+							title: 'Astrological Insights',
+							subtitle: 'Connect with the cosmos today.',
+						),
+					],
+				),
+			),
+			loading: () => const Center(
+				child: CircularProgressIndicator(color: AppColors.primary),
+			),
+			error: (error, stackTrace) => _ErrorState(
+				message: error.toString(),
+				onRetry: () => ref.refresh(panchangDashboardProvider),
+			),
+		);
+	}
+}
 
-          // --- Bento Grid for Astro Data ---
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Left Box: Tithi & Nakshatra
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: _bentoBoxDecoration(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(LucideIcons.moon, color: AppColors.primaryContainer, size: 18),
-                          const SizedBox(width: 8),
-                          Text('Tithi', style: AppThemes.labelMd),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text('Shukla Tritiya', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 18)),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8.0),
-                        child: Divider(color: AppColors.outlineVariant.withOpacity(0.5), height: 1),
-                      ),
-                      Row(
-                        children: [
-                          const Icon(LucideIcons.sparkles, color: AppColors.primaryContainer, size: 18),
-                          const SizedBox(width: 8),
-                          Text('Nakshatra', style: AppThemes.labelMd),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text('Rohini', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 18)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              // Right Box: Sunrise & Sunset
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: _bentoBoxDecoration(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Sunrise', style: AppThemes.labelMd),
-                              Text('5:45 AM', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 18)),
-                            ],
-                          ),
-                          const Icon(LucideIcons.sun, color: AppColors.primaryContainer),
-                        ],
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 10.0),
-                        child: Divider(color: AppColors.outlineVariant.withOpacity(0.5), height: 1),
-                      ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Sunset', style: AppThemes.labelMd),
-                              Text('6:45 PM', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 18)),
-                            ],
-                          ),
-                          const Icon(LucideIcons.sunset, color: AppColors.onSurfaceVariant),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
+class _FestivalCard extends StatelessWidget {
+	final String title;
 
-          // --- Muhurat Section ---
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: _bentoBoxDecoration(),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(LucideIcons.clock, color: AppColors.primaryContainer),
-                        const SizedBox(width: 8),
-                        Text('Muhurat Timings', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 20)),
-                      ],
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryContainer,
-                        borderRadius: BorderRadius.circular(100),
-                      ),
-                      child: const Text(
-                        'AUSPICIOUS',
-                        style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1),
-                      ),
-                    )
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.02),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Shubh Muhurat', style: AppThemes.labelMd),
-                          Text('11:50 AM - 12:45 PM', style: AppThemes.bodyLg.copyWith(fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      const Icon(LucideIcons.checkCircle, color: AppColors.primaryContainer),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.errorContainerBg.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppColors.error.withOpacity(0.1)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Rahu Kaal (Avoid)', style: AppThemes.labelMd.copyWith(color: AppColors.error)),
-                          Text('2:00 PM - 3:30 PM', style: AppThemes.bodyLg.copyWith(fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      const Icon(LucideIcons.alertTriangle, color: AppColors.error),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
+	const _FestivalCard({required this.title});
 
-          // --- RESTORED: Rashifal Preview Block ---
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: _bentoBoxDecoration(),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Daily Rashifal', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 20)),
-                    TextButton(
-                      onPressed: () {},
-                      style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero),
-                      child: Row(
-                        children: [
-                          Text('View All ', style: AppThemes.labelMd.copyWith(color: AppColors.primaryContainer, fontWeight: FontWeight.bold)),
-                          const Icon(LucideIcons.chevronRight, size: 16, color: AppColors.primaryContainer),
-                        ],
-                      ),
-                    )
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Column(
-                      children: [
-                        Container(
-                          width: 64,
-                          height: 64,
-                          decoration: BoxDecoration(
-                            color: AppColors.primaryContainer.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: AppColors.primaryContainer.withOpacity(0.3), width: 2),
-                          ),
-                          child: const Icon(LucideIcons.star, color: AppColors.primaryContainer),
-                        ),
-                        const SizedBox(height: 4),
-                        Text('Aries', style: AppThemes.labelMd.copyWith(color: AppColors.onSurface, fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.02),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '"Your celestial alignment suggests a day of immense financial growth. New opportunities await in the workspace, focus on collaborative efforts for maximum success..."',
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppThemes.bodyMd.copyWith(fontStyle: FontStyle.italic),
-                        ),
-                      ),
-                    )
-                  ],
-                )
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
+	@override
+	Widget build(BuildContext context) {
+		return Container(
+			padding: const EdgeInsets.all(14),
+			decoration: BoxDecoration(
+				color: AppColors.primaryContainer.withOpacity(0.08),
+				borderRadius: BorderRadius.circular(16),
+				border: Border.all(color: AppColors.primaryContainer.withOpacity(0.2)),
+			),
+			child: Row(
+				children: [
+					Container(
+						width: 44,
+						height: 44,
+						decoration: BoxDecoration(
+							color: AppColors.primaryContainer,
+							shape: BoxShape.circle,
+						),
+						child: const Icon(LucideIcons.home, color: Colors.white),
+					),
+					const SizedBox(width: 12),
+					Expanded(
+						child: Column(
+							crossAxisAlignment: CrossAxisAlignment.start,
+							children: [
+								Text(
+									'Festival Today',
+									style: AppThemes.bodySm,
+								),
+								const SizedBox(height: 4),
+								Text(
+									title,
+									style: AppThemes.bodyMd.copyWith(
+										fontWeight: FontWeight.bold,
+										color: AppColors.onSurface,
+									),
+								),
+							],
+						),
+					),
+					const Icon(LucideIcons.chevronRight, color: AppColors.primaryContainer),
+				],
+			),
+		);
+	}
+}
 
-          // --- RESTORED: Upcoming Events Block ---
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: _bentoBoxDecoration(),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Upcoming Events', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 20)),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: AppColors.outlineVariant),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryContainer,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Column(
-                          children: [
-                            Text('MAY', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                            Text('19', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, height: 1.1)),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Mohini Ekadashi', style: AppThemes.labelMd.copyWith(color: AppColors.onSurface, fontWeight: FontWeight.bold)),
-                            Text('Vrat and Puja Vidhi', style: AppThemes.bodyMd.copyWith(fontSize: 12)),
-                          ],
-                        ),
-                      ),
-                      ElevatedButton(
-                        onPressed: () {},
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryContainer,
-                          foregroundColor: Colors.white,
-                          elevation: 2,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        ),
-                        child: const Text('Set Reminder', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                      ),
-                    ],
-                  ),
-                )
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
+class _InfoTile extends StatelessWidget {
+	final String title;
+	final String value;
+	final IconData icon;
 
-          // --- Featured Artwork Section ---
-          Container(
-            height: 224,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.primaryContainer.withOpacity(0.15),
-                  blurRadius: 20,
-                  offset: const Offset(0, 4),
-                )
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: Image.network(
-                      'https://lh3.googleusercontent.com/aida-public/AB6AXuDjJ4jq73RyQxCpoOLyPSIWgvYSa2sBslby8yViZnO8oFFjP1cbAVbVp7hXqR7r7W4wyxQy-0gqDa5ldnBZOXidQOXjazU3fcPPUqv1nVCi6zyKMaBZzuOIq5mGej9DN0gzB55mmW1t3bdpNgSg7oKEpNgPi-aOBw2aRiX9Xiw3aiclL8v0MGvZnxYzO4ASwYtl6sezwH0b4gDued7HHE6jezRnftO4uFJR4adnv9uJd-uiPMigzQWGp1nc9QXflvHYd6glFP9YntY',
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                  Positioned.fill(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.transparent,
-                            AppColors.primaryContainer.withOpacity(0.8),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    left: 12,
-                    bottom: 12,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Astrological Insights', style: AppThemes.headlineLgMobile.copyWith(color: Colors.white, fontSize: 20)),
-                        const Text('Connect with the cosmos today.', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                      ],
-                    ),
-                  )
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+	const _InfoTile({
+		required this.title,
+		required this.value,
+		required this.icon,
+	});
 
-  BoxDecoration _bentoBoxDecoration() {
-    return BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      boxShadow: [
-        BoxShadow(
-          color: AppColors.primary.withOpacity(0.06),
-          blurRadius: 20,
-          offset: const Offset(0, 4),
-        )
-      ],
-    );
-  }
+	@override
+	Widget build(BuildContext context) {
+		return Container(
+			padding: const EdgeInsets.all(12),
+			decoration: BoxDecoration(
+				color: Colors.white,
+				borderRadius: BorderRadius.circular(12),
+				border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+			),
+			child: Column(
+				crossAxisAlignment: CrossAxisAlignment.start,
+				children: [
+					Row(
+						children: [
+							Icon(icon, size: 16, color: AppColors.primaryContainer),
+							const SizedBox(width: 6),
+							Text(
+								title,
+								style: AppThemes.labelMd,
+							),
+						],
+					),
+					const SizedBox(height: 8),
+					Text(
+						value,
+						style: AppThemes.bodyMd.copyWith(
+							fontWeight: FontWeight.bold,
+							color: const Color.fromARGB(255, 70, 72, 72),
+						),
+					),
+				],
+			),
+		);
+	}
+}
+
+class _SectionHeader extends StatelessWidget {
+	final String title;
+	final String? pillText;
+	final String? actionText;
+
+	const _SectionHeader({
+		required this.title,
+		this.pillText,
+		this.actionText,
+	});
+
+	@override
+	Widget build(BuildContext context) {
+		return Row(
+			children: [
+				Expanded(
+					child: Text(
+						title,
+						style: AppThemes.headlineSm,
+					),
+				),
+				if (pillText != null)
+					Container(
+						padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+						decoration: BoxDecoration(
+							color: AppColors.primaryContainer,
+							borderRadius: BorderRadius.circular(999),
+						),
+						child: Text(
+							pillText!,
+							style: AppThemes.labelMd.copyWith(color: Colors.white),
+						),
+					),
+				if (actionText != null)
+					Text(
+						actionText!,
+						style: AppThemes.labelMd.copyWith(
+							color: AppColors.primaryContainer,
+						),
+					),
+			],
+		);
+	}
+}
+
+class _MuhuratScroller extends StatelessWidget {
+	final String title;
+	final List<PanchangMuhuratVm> items;
+	final bool isPositive;
+
+	const _MuhuratScroller({
+		required this.title,
+		required this.items,
+		required this.isPositive,
+	});
+
+	@override
+	Widget build(BuildContext context) {
+		final toneColor = isPositive ? AppColors.primaryContainer : AppColors.error;
+		final bgColor = isPositive
+				? Colors.green[50] ?? AppColors.primaryContainer.withOpacity(0.08)
+				: AppColors.errorContainerBg;
+		const nameColor = AppColors.onSurfaceVariant;
+
+		return Column(
+			crossAxisAlignment: CrossAxisAlignment.start,
+			children: [
+				Text(
+					title,
+					style: AppThemes.labelMd.copyWith(color: toneColor),
+				),
+				const SizedBox(height: 8),
+				SizedBox(
+					height: 88,
+					child: ListView.separated(
+						scrollDirection: Axis.horizontal,
+						itemCount: items.length,
+						separatorBuilder: (_, __) => const SizedBox(width: 10),
+						itemBuilder: (context, index) {
+							final item = items[index];
+							return Container(
+								width: 170,
+								padding: const EdgeInsets.all(12),
+								decoration: BoxDecoration(
+									color: bgColor,
+									borderRadius: BorderRadius.circular(12),
+									// border: Border.all(color: toneColor.withOpacity(0.3)),
+								),
+								child: Column(
+									crossAxisAlignment: CrossAxisAlignment.start,
+									mainAxisAlignment: MainAxisAlignment.spaceBetween,
+									children: [
+										Text(
+											item.name,
+											maxLines: 1,
+											overflow: TextOverflow.ellipsis,
+											style: AppThemes.labelMd.copyWith(
+                        fontWeight: FontWeight.w800,
+												fontSize: 14,
+												color: nameColor,
+											),
+										),
+										Text(
+											item.timeRange,
+											style: AppThemes.bodySm.copyWith(
+                        fontWeight: FontWeight.w400,
+												color: const Color.fromARGB(255, 1, 1, 1),
+											),
+										),
+									],
+								),
+							);
+						},
+					),
+				),
+			],
+		);
+	}
+}
+
+class _RashifalCard extends StatefulWidget {
+	final String sign;
+	final String text;
+	final String symbol;
+
+	const _RashifalCard({
+		required this.sign,
+		required this.text,
+		required this.symbol,
+	});
+
+	@override
+	State<_RashifalCard> createState() => _RashifalCardState();
+}
+
+class _RashifalCardState extends State<_RashifalCard> {
+	bool _expanded = false;
+
+	IconData _zodiacIcon(String value) {
+		switch (value.toLowerCase()) {
+			case 'aries':
+				return LucideIcons.sun;
+			case 'taurus':
+				return LucideIcons.trees;
+			case 'gemini':
+				return LucideIcons.users;
+			case 'cancer':
+				return LucideIcons.waves;
+			case 'leo':
+				return LucideIcons.star;
+			case 'virgo':
+				return LucideIcons.sparkles;
+			case 'libra':
+				return LucideIcons.moon;
+			case 'scorpio':
+				return LucideIcons.star;
+			case 'sagittarius':
+				return LucideIcons.sun;
+			case 'capricorn':
+				return LucideIcons.trees;
+			case 'aquarius':
+				return LucideIcons.waves;
+			case 'pisces':
+				return LucideIcons.moon;
+			default:
+				return LucideIcons.star;
+		}
+	}
+
+	String _truncateWords(String value, int limit) {
+		final trimmed = value.trim();
+		if (trimmed.isEmpty) return trimmed;
+		final words = trimmed.split(RegExp(r'\s+'));
+		if (words.length <= limit) return trimmed;
+		return '${words.take(limit).join(' ')}...';
+	}
+
+	@override
+	Widget build(BuildContext context) {
+		final displayText = _expanded
+				? widget.text
+				: _truncateWords(widget.text, 20);
+		final icon = _zodiacIcon(widget.sign);
+		final showSymbol = widget.symbol.trim().isNotEmpty;
+
+		return Container(
+			decoration: BoxDecoration(
+				color: Colors.white,
+				borderRadius: BorderRadius.circular(16),
+				border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+			),
+			child: InkWell(
+				onTap: () => setState(() => _expanded = !_expanded),
+				borderRadius: BorderRadius.circular(16),
+				child: Padding(
+					padding: const EdgeInsets.all(14),
+					child: Row(
+						crossAxisAlignment: CrossAxisAlignment.start,
+						children: [
+							Container(
+								width: 30,
+								height: 30,
+								decoration: BoxDecoration(
+									shape: BoxShape.circle,
+									border: Border.all(color: AppColors.primaryContainer.withOpacity(0.4)),
+									color: AppColors.primaryContainer.withOpacity(0.08),
+								),
+								child: Center(
+									child: showSymbol
+										? Text(
+											widget.symbol,
+											style: AppThemes.bodyMd.copyWith(
+												fontWeight: FontWeight.bold,
+												color: AppColors.primaryContainer,
+											),
+										)
+										: Icon(icon, color: AppColors.primaryContainer),
+								),
+							),
+							const SizedBox(width: 12),
+							Expanded(
+								child: Column(
+									crossAxisAlignment: CrossAxisAlignment.start,
+									children: [
+										Text(
+											widget.sign,
+											style: AppThemes.bodyMd.copyWith(
+												fontWeight: FontWeight.bold,
+												color: AppColors.onSurface,
+											),
+										),
+										const SizedBox(height: 6),
+										Text(
+											displayText,
+											style: AppThemes.bodySm,
+										),
+									],
+								),
+							),
+						],
+					),
+				),
+			),
+		);
+	}
+}
+
+class _UpcomingEventCard extends StatelessWidget {
+	final String dateLabel;
+	final String name;
+	final String cta;
+
+	const _UpcomingEventCard({
+		required this.dateLabel,
+		required this.name,
+		required this.cta,
+	});
+
+	@override
+	Widget build(BuildContext context) {
+		return Container(
+			padding: const EdgeInsets.all(14),
+			decoration: BoxDecoration(
+				color: Colors.white,
+				borderRadius: BorderRadius.circular(16),
+				border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+			),
+			child: Row(
+				children: [
+					Container(
+						padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+						decoration: BoxDecoration(
+							color: AppColors.primaryContainer,
+							borderRadius: BorderRadius.circular(12),
+						),
+						child: Text(
+							dateLabel,
+							textAlign: TextAlign.center,
+							style: AppThemes.labelMd.copyWith(color: Colors.white),
+						),
+					),
+					const SizedBox(width: 12),
+					Expanded(
+						child: Column(
+							crossAxisAlignment: CrossAxisAlignment.start,
+							children: [
+								Text(
+									name,
+									style: AppThemes.bodyMd.copyWith(
+										fontWeight: FontWeight.bold,
+										color: AppColors.onSurface,
+									),
+								),
+								const SizedBox(height: 4),
+								Text(
+									'Vrat and Puja Vidhi',
+									style: AppThemes.bodySm,
+								),
+							],
+						),
+					),
+					Container(
+						padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+						decoration: BoxDecoration(
+							color: AppColors.primaryContainer,
+							borderRadius: BorderRadius.circular(12),
+						),
+						child: Text(
+							cta,
+							style: AppThemes.labelMd.copyWith(color: Colors.white),
+						),
+					),
+				],
+			),
+		);
+	}
+}
+
+class _AstroInsightCard extends StatelessWidget {
+	final String title;
+	final String subtitle;
+
+	const _AstroInsightCard({
+		required this.title,
+		required this.subtitle,
+	});
+
+	@override
+	Widget build(BuildContext context) {
+		return ClipRRect(
+			borderRadius: BorderRadius.circular(16),
+			child: Stack(
+				children: [
+					SizedBox(
+						height: 160,
+						width: double.infinity,
+						child: Image.network(
+							'https://lh3.googleusercontent.com/aida-public/AB6AXuDjJ4jq73RyQxCpoOLyPSIWgvYSa2sBslby8yViZnO8oFFjP1cbAVbVp7hXqR7r7W4wyxQy-0gqDa5ldnBZOXidQOXjazU3fcPPUqv1nVCi6zyKMaBZzuOIq5mGej9DN0gzB55mmW1t3bdpNgSg7oKEpNgPi-aOBw2aRiX9Xiw3aiclL8v0MGvZnxYzO4ASwYtl6sezwH0b4gDued7HHE6jezRnftO4uFJR4adnv9uJd-uiPMigzQWGp1nc9QXflvHYd6glFP9YntY',
+							fit: BoxFit.cover,
+						),
+					),
+					Positioned.fill(
+						child: Container(
+							decoration: BoxDecoration(
+								gradient: LinearGradient(
+									colors: [Colors.transparent, Colors.black.withOpacity(0.6)],
+									begin: Alignment.topCenter,
+									end: Alignment.bottomCenter,
+								),
+							),
+						),
+					),
+					Positioned(
+						left: 16,
+						right: 16,
+						bottom: 16,
+						child: Column(
+							crossAxisAlignment: CrossAxisAlignment.start,
+							children: [
+								Text(
+									title,
+									style: AppThemes.headlineSm.copyWith(color: Colors.white),
+								),
+								const SizedBox(height: 4),
+								Text(
+									subtitle,
+									style: AppThemes.bodySm.copyWith(color: Colors.white70),
+								),
+							],
+						),
+					),
+				],
+			),
+		);
+	}
+}
+
+class _ErrorState extends StatelessWidget {
+	final String message;
+	final VoidCallback onRetry;
+
+	const _ErrorState({required this.message, required this.onRetry});
+
+	@override
+	Widget build(BuildContext context) {
+		return Center(
+			child: Padding(
+				padding: const EdgeInsets.all(24),
+				child: Column(
+					mainAxisSize: MainAxisSize.min,
+					children: [
+						const Icon(LucideIcons.alertTriangle, color: AppColors.error, size: 32),
+						const SizedBox(height: 12),
+						Text(
+							'Unable to load Panchang data',
+							style: AppThemes.headlineSm.copyWith(fontSize: 16),
+						),
+						const SizedBox(height: 6),
+						Text(
+							message,
+							textAlign: TextAlign.center,
+							style: AppThemes.bodySm,
+						),
+						const SizedBox(height: 12),
+						ElevatedButton(
+							onPressed: onRetry,
+							style: ElevatedButton.styleFrom(
+								backgroundColor: AppColors.primaryContainer,
+								foregroundColor: Colors.white,
+							),
+							child: Text(
+								'Retry',
+								style: AppThemes.labelMd.copyWith(color: Colors.white),
+							),
+						),
+					],
+				),
+			),
+		);
+	}
 }

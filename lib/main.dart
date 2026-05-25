@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:panchang_app/constants/app_themes.dart';
 import 'package:panchang_app/features/festivals/presentation/festivals_screen.dart';
 import 'package:panchang_app/features/settings/presentation/settings_screen.dart';
 
@@ -62,9 +63,9 @@ class DashboardPage extends ConsumerWidget {
         title: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
+            Text(
               'Vedic Panchang', 
-              style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold, fontFamily: 'Epilogue', fontSize: 22)
+              style: AppThemes.headlineSm.copyWith(color: AppColors.primary),
             ),
             // if (topBarState.currentRegion != 'Detecting...')
             //   Text(

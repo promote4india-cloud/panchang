@@ -9,6 +9,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.services.db import ensure_content_schema
 from backend.services.festival_rules_seed import seed_festival_rules
@@ -106,13 +107,13 @@ def _startup_prewarm() -> None:
 
 raw_origins = os.getenv(
 	"CORS_ALLOW_ORIGINS",
-	"http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
+	"http://localhost:8000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
 )
 allow_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
 
 app.add_middleware(
 	CORSMiddleware,
-	allow_origins=allow_origins,
+	allow_origins=["*"],
 	allow_credentials=True,
 	allow_methods=["*"],
 	allow_headers=["*"],
