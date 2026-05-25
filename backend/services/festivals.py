@@ -1547,7 +1547,16 @@ def resolve_dates(
     rule = json.loads(rule_json) if isinstance(rule_json, str) else rule_json
     tz_spec = _resolve_tz_spec(calendar_time, tz, lon)
     snaps = _year_snapshot(year, round(lat, 1), round(lon, 1), tz_spec, ayanamsa)
-    return _resolve_against_snapshot(rule_type, rule, snaps, year, tz_spec)
+    # Ensure swisseph sid_mode is set on the current thread. pyswisseph
+    # stores sid_mode in thread-local storage, so the module-load default
+    # (panchang.py) only applies to the main thread. When `_year_snapshot`
+    # is a cache hit, `ayanamsa_mode` is not entered for the snapshot
+    # build, and downstream `sun_longitude` calls (e.g. inside
+    # `_solar_ingress_datetime`) would otherwise see whatever default
+    # this worker thread starts with (Fagan/Bradley = mode 0), producing
+    # wrong ingress moments.
+    with ayanamsa_mode(ayanamsa):
+        return _resolve_against_snapshot(rule_type, rule, snaps, year, tz_spec)
 
 
 @dataclass
@@ -1649,7 +1658,15 @@ def festivals_in_range(
 
     # (festival_id, date) -> {row, traditions[]}
     merged: dict[tuple[str, Date], dict] = {}
-    for r in rows:
+    # Enter ayanamsa_mode around the resolve loop. pyswisseph stores
+    # sid_mode in thread-local storage; on snapshot cache hit the CM in
+    # `_year_snapshot` is skipped, so the worker thread (Starlette runs
+    # sync endpoints in a threadpool) would otherwise compute
+    # `sun_longitude` with Fagan/Bradley (mode 0 default), shifting
+    # `_solar_ingress_datetime` by ~0.88 deg and corrupting sankranti
+    # dates (e.g. Baisakhi 2026: Apr 14 -> Apr 15).
+    with ayanamsa_mode(ayanamsa):
+      for r in rows:
         try:
             rule = json.loads(r["rule_json"]) if r["rule_json"] else {}
         except json.JSONDecodeError:

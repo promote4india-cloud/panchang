@@ -114,11 +114,13 @@ RULES: dict[str, tuple[str, dict[str, Any]]] = {
     "uttarayan":            ("solar_event", {"event": "makar_sankranti"}),
     "pongal":               ("solar_event", {"event": "makar_sankranti",
                                               "punya_kala_rule": "south"}),
-    # Baisakhi (Vaisakhi): Punjab/Sikh tradition uses sunset cutoff like
-    # all North-Indian solar events -- ingress AFTER sunset shifts the
-    # observance to the NEXT civil day. Wikipedia-confirmed: 2026-04-14.
+    # Baisakhi (Vaisakhi): Punjab/Sikh tradition celebrates on the civil
+    # day of Mesha ingress regardless of the time of day -- there is no
+    # sunset cutoff. Drik/Wikipedia: 2026-04-14 (ingress 09:32 IST),
+    # 2028-04-13 (ingress 21:44 IST, still on the 13th). This is the
+    # "south" punya_kala convention (no shift).
     "baisakhi":             ("solar_event", {"event": "mesha_sankranti",
-                                              "punya_kala_rule": "north"}),
+                                              "punya_kala_rule": "south"}),
     "sankranti":            ("solar_event", {"event": "makar_sankranti"}),
 
     # -------------------------------------------------------------------
