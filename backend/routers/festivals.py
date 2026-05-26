@@ -541,7 +541,6 @@ def festival_dates(
 
 
 @router.get("/{festival_id}")
-@router.get("/{festival_id}")
 def festival_detail(
     festival_id: str,
     response: Response,
