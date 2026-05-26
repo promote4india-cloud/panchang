@@ -5,6 +5,7 @@ class PanchangTodayDto {
   final NakshatraDto nakshatra;
   final MasaDto masa;
   final SunMoonDto sunMoon;
+  final HinduMonthYearDto hinduMonthAndYear;
 
   PanchangTodayDto({
     required this.date,
@@ -13,6 +14,7 @@ class PanchangTodayDto {
     required this.nakshatra,
     required this.masa,
     required this.sunMoon,
+    required this.hinduMonthAndYear,
   });
 
   factory PanchangTodayDto.fromJson(Map<String, dynamic> json) {
@@ -23,6 +25,26 @@ class PanchangTodayDto {
       nakshatra: NakshatraDto.fromJson(json['nakshatra'] as Map<String, dynamic>),
       masa: MasaDto.fromJson(json['masa'] as Map<String, dynamic>),
       sunMoon: SunMoonDto.fromJson(json['sun_moon'] as Map<String, dynamic>),
+      hinduMonthAndYear: HinduMonthYearDto.fromJson(
+        json['hindu_month_and_year'] as Map<String, dynamic>,
+      ),
+    );
+  }
+}
+
+class HinduMonthYearDto {
+  final String monthPurnimanta;
+  final String monthAmanta;
+
+  HinduMonthYearDto({
+    required this.monthPurnimanta,
+    required this.monthAmanta,
+  });
+
+  factory HinduMonthYearDto.fromJson(Map<String, dynamic> json) {
+    return HinduMonthYearDto(
+      monthPurnimanta: json['month_purnimanta'] as String? ?? '',
+      monthAmanta: json['month_amanta'] as String? ?? '',
     );
   }
 }
@@ -209,6 +231,75 @@ class FestivalsUpcomingResponseDto {
         .map((item) => UpcomingFestivalDto.fromJson(item as Map<String, dynamic>))
         .toList();
     return FestivalsUpcomingResponseDto(items: items);
+  }
+}
+
+class FestivalCalendarEventDto {
+  final String id;
+  final String name;
+  final String? type;
+  final bool? primary;
+
+  FestivalCalendarEventDto({
+    required this.id,
+    required this.name,
+    required this.type,
+    required this.primary,
+  });
+
+  factory FestivalCalendarEventDto.fromJson(Map<String, dynamic> json) {
+    return FestivalCalendarEventDto(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      type: json['type'] as String?,
+      primary: json['primary'] as bool?,
+    );
+  }
+}
+
+class FestivalCalendarDayDto {
+  final int day;
+  final String weekday;
+  final List<FestivalCalendarEventDto> events;
+
+  FestivalCalendarDayDto({
+    required this.day,
+    required this.weekday,
+    required this.events,
+  });
+
+  factory FestivalCalendarDayDto.fromJson(Map<String, dynamic> json) {
+    final events = (json['events'] as List<dynamic>? ?? [])
+        .map((item) => FestivalCalendarEventDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+    return FestivalCalendarDayDto(
+      day: json['day'] as int,
+      weekday: json['weekday'] as String,
+      events: events,
+    );
+  }
+}
+
+class FestivalCalendarResponseDto {
+  final int year;
+  final int month;
+  final List<FestivalCalendarDayDto> days;
+
+  FestivalCalendarResponseDto({
+    required this.year,
+    required this.month,
+    required this.days,
+  });
+
+  factory FestivalCalendarResponseDto.fromJson(Map<String, dynamic> json) {
+    final days = (json['days'] as List<dynamic>? ?? [])
+        .map((item) => FestivalCalendarDayDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+    return FestivalCalendarResponseDto(
+      year: json['year'] as int,
+      month: json['month'] as int,
+      days: days,
+    );
   }
 }
 

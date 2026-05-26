@@ -4,6 +4,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:panchang_app/constants/app_themes.dart';
 import 'package:panchang_app/features/festivals/presentation/festivals_screen.dart';
 import 'package:panchang_app/features/settings/presentation/settings_screen.dart';
+import 'config/user_config_dev.dart';
 
 // Import features via relative file mapping links
 import 'constants/app_colors.dart';
@@ -11,7 +12,9 @@ import 'providers/app_providers.dart';
 import 'features/panchang/presentation/panchang_dashboard_view.dart';
 import 'features/horoscope/presentation/horoscope_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await UserConfigDevHelper.loadOverrides();
   runApp(
     const ProviderScope(child: VedicPanchangApp()),
   );
@@ -43,6 +46,7 @@ class DashboardPage extends ConsumerWidget {
     final activeTabIndex = ref.watch(navigationProvider);
     // Watched top bar data changes
     final topBarState = ref.watch(topBarProvider);
+    final appBarTitle = _titleForTab(activeTabIndex);
 
     final List<Widget> screens = [
       const PanchangDashboardView(), 
@@ -64,7 +68,7 @@ class DashboardPage extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Vedic Panchang', 
+              appBarTitle,
               style: AppThemes.headlineSm.copyWith(color: AppColors.primary),
             ),
             // if (topBarState.currentRegion != 'Detecting...')
@@ -174,6 +178,20 @@ class DashboardPage extends ConsumerWidget {
           ),
         ),
       );
+    }
+  }
+
+  String _titleForTab(int index) {
+    switch (index) {
+      case 1:
+        return 'Horoscope';
+      case 2:
+        return 'Festivals';
+      case 3:
+        return 'Settings';
+      case 0:
+      default:
+        return 'Vedic Panchang';
     }
   }
 }

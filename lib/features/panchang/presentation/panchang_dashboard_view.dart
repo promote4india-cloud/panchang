@@ -4,6 +4,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../constants/app_colors.dart';
 import '../../../constants/app_themes.dart';
+import '../../../assset/zodiac_icons.dart';
 import '../models/panchang_models.dart';
 import '../providers/panchang_providers.dart';
 
@@ -376,37 +377,6 @@ class _RashifalCard extends StatefulWidget {
 class _RashifalCardState extends State<_RashifalCard> {
 	bool _expanded = false;
 
-	IconData _zodiacIcon(String value) {
-		switch (value.toLowerCase()) {
-			case 'aries':
-				return LucideIcons.sun;
-			case 'taurus':
-				return LucideIcons.trees;
-			case 'gemini':
-				return LucideIcons.users;
-			case 'cancer':
-				return LucideIcons.waves;
-			case 'leo':
-				return LucideIcons.star;
-			case 'virgo':
-				return LucideIcons.sparkles;
-			case 'libra':
-				return LucideIcons.moon;
-			case 'scorpio':
-				return LucideIcons.star;
-			case 'sagittarius':
-				return LucideIcons.sun;
-			case 'capricorn':
-				return LucideIcons.trees;
-			case 'aquarius':
-				return LucideIcons.waves;
-			case 'pisces':
-				return LucideIcons.moon;
-			default:
-				return LucideIcons.star;
-		}
-	}
-
 	String _truncateWords(String value, int limit) {
 		final trimmed = value.trim();
 		if (trimmed.isEmpty) return trimmed;
@@ -420,7 +390,7 @@ class _RashifalCardState extends State<_RashifalCard> {
 		final displayText = _expanded
 				? widget.text
 				: _truncateWords(widget.text, 20);
-		final icon = _zodiacIcon(widget.sign);
+		final icon = zodiacIconFor(widget.sign);
 		final showSymbol = widget.symbol.trim().isNotEmpty;
 
 		return Container(

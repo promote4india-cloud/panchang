@@ -1,112 +1,150 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+
 import '../../../constants/app_colors.dart';
 import '../../../constants/app_themes.dart';
+import '../../panchang/models/panchang_models.dart';
+import '../providers/festivals_providers.dart';
 
-class FestivalsView extends StatelessWidget {
+class FestivalsView extends ConsumerWidget {
   const FestivalsView({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     // Dynamic breakpoint tracking
     final screenWidth = MediaQuery.of(context).size.width;
     final isDesktop = screenWidth > 768;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 24.0, bottom: 120.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // --- Hero Month Header Section ---
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'MASA: KARTIKA',
-                      style: AppThemes.labelMd.copyWith(
-                        color: AppColors.primaryContainer, 
-                        fontWeight: FontWeight.bold, 
-                        letterSpacing: 1.5
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text('November 2024', style: AppThemes.headlineLgMobile.copyWith(fontSize: 24)),
-                  ],
-                ),
-              ),
-              // Month Selector Control Panel
-              Container(
-                padding: const EdgeInsets.all(2),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.03),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(LucideIcons.chevronLeft, size: 16),
-                      onPressed: () {},
-                      constraints: const BoxConstraints(),
-                      padding: const EdgeInsets.all(4),
-                    ),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 6.0),
-                      child: Text('Select Month', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Manrope')),
-                    ),
-                    IconButton(
-                      icon: const Icon(LucideIcons.chevronRight, size: 16),
-                      onPressed: () {},
-                      constraints: const BoxConstraints(),
-                      padding: const EdgeInsets.all(4),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
+    final calendar = ref.watch(festivalsCalendarProvider);
 
-          // --- Calendar Layout Section Splits ---
-          if (isDesktop)
+    return calendar.when(
+      data: (vm) => SingleChildScrollView(
+        padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 24.0, bottom: 120.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // --- Hero Month Header Section ---
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Expanded(flex: 7, child: _buildGridCalendarBlock(screenWidth)),
-                const SizedBox(width: 24),
-                Expanded(flex: 5, child: _buildSideEventsBarBlock()),
-              ],
-            )
-          else
-            Column(
-              children: [
-                _buildGridCalendarBlock(screenWidth),
-                const SizedBox(height: 20),
-                _buildSideEventsBarBlock(),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        vm.masaRangeLabel,
+                        style: AppThemes.labelMd.copyWith(
+                          color: AppColors.primaryContainer,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(vm.monthLabel, style: AppThemes.headlineLgMobile.copyWith(fontSize: 24)),
+                    ],
+                  ),
+                ),
+                // Month Selector Control Panel
+                Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.03),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(LucideIcons.chevronLeft, size: 16),
+                        onPressed: () {
+                          ref.read(festivalMonthProvider.notifier).setMonth(
+                            DateTime(vm.year, vm.month - 1, 1),
+                          );
+                        },
+                        constraints: const BoxConstraints(),
+                        padding: const EdgeInsets.all(4),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 6.0),
+                        child: Text('Select Month', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Manrope')),
+                      ),
+                      IconButton(
+                        icon: const Icon(LucideIcons.chevronRight, size: 16),
+                        onPressed: () {
+                          ref.read(festivalMonthProvider.notifier).setMonth(
+                            DateTime(vm.year, vm.month + 1, 1),
+                          );
+                        },
+                        constraints: const BoxConstraints(),
+                        padding: const EdgeInsets.all(4),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
-          const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
-          // --- Fixed: Mobile Responsive List Alternative View to replace table ---
-          Text('Full Calendar View', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 20)),
-          const SizedBox(height: 12),
-          ListView(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            children: [
-              _buildResponsiveCalendarRow('Nov 01, Fri', 'Amavasya, Krishna Paksha', 'Diwali, Lakshmi Puja', 'HIGH', Colors.green),
-              _buildResponsiveCalendarRow('Nov 02, Sat', 'Pratipada, Shukla Paksha', 'Govardhan Puja, Annakut', 'HIGH', Colors.green),
-              _buildResponsiveCalendarRow('Nov 03, Sun', 'Dwitiya, Shukla Paksha', 'Bhai Dooj', 'MODERATE', AppColors.primaryContainer),
-              _buildResponsiveCalendarRow('Nov 07, Thu', 'Shashti, Shukla Paksha', 'Chhath Puja (Arghya)', 'HIGH', Colors.green),
-            ],
-          )
-        ],
+            // --- Calendar Layout Section Splits ---
+            if (isDesktop)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 7, child: _buildGridCalendarBlock(context, screenWidth, vm)),
+                  const SizedBox(width: 24),
+                  Expanded(flex: 5, child: _buildSideEventsBarBlock(_featuredEvents(vm.events))),
+                ],
+              )
+            else
+              Column(
+                children: [
+                  _buildGridCalendarBlock(context, screenWidth, vm),
+                  const SizedBox(height: 20),
+                  _buildSideEventsBarBlock(_featuredEvents(vm.events)),
+                ],
+              ),
+            const SizedBox(height: 24),
+
+            // --- Fixed: Mobile Responsive List Alternative View to replace table ---
+            Text('Full Calendar View', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 20)),
+            const SizedBox(height: 12),
+            if (vm.events.isEmpty)
+              Text('No festivals listed for this month.', style: AppThemes.bodyMd.copyWith(color: AppColors.onSurfaceVariant))
+            else
+              ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: vm.events.length,
+                itemBuilder: (context, index) {
+                  final event = vm.events[index];
+                  return _buildResponsiveCalendarRow(
+                    _formatEventDate(event.date),
+                    event.weekday,
+                    event.name,
+                    _eventTypeLabel(event.type),
+                    AppColors.primaryContainer,
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+      loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+      error: (error, stackTrace) => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Unable to load festivals.', style: AppThemes.bodyMd.copyWith(color: AppColors.onSurfaceVariant)),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () => ref.refresh(festivalsCalendarProvider),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -115,7 +153,29 @@ class FestivalsView extends StatelessWidget {
   // SUB-LAYOUT MODULAR BUILDERS
   // =========================================================================
 
-  Widget _buildGridCalendarBlock(double screenWidth) {
+  Widget _buildGridCalendarBlock(BuildContext context, double screenWidth, FestivalsCalendarVm vm) {
+    final startWeekday = DateTime(vm.year, vm.month, 1).weekday;
+    final leadingEmpty = startWeekday % 7;
+    final totalDays = vm.days.length;
+    final totalCells = leadingEmpty + totalDays;
+    final trailingEmpty = (7 - (totalCells % 7)) % 7;
+
+    final cells = <Widget>[];
+    for (var i = 0; i < leadingEmpty; i++) {
+      cells.add(_buildEmptyDayCell());
+    }
+    for (final day in vm.days) {
+      cells.add(_buildDayCell(
+        context,
+        day.day.toString(),
+        date: DateTime(vm.year, vm.month, day.day),
+        events: day.events,
+      ));
+    }
+    for (var i = 0; i < trailingEmpty; i++) {
+      cells.add(_buildEmptyDayCell());
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -148,29 +208,7 @@ class FestivalsView extends StatelessWidget {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             childAspectRatio: screenWidth > 400 ? 0.75 : 0.65, // Dynamically scales spacing based on device width
-            children: [
-              // Row 1: Placeholders
-              _buildEmptyDayCell(), _buildEmptyDayCell(), _buildEmptyDayCell(), _buildEmptyDayCell(),
-              _buildDayCell('1', tag: 'Diwali'),
-              _buildDayCell('2'),
-              _buildDayCell('3'),
-              // Row 2
-              _buildDayCell('4'),
-              _buildDayCell('5'),
-              _buildDayCell('6', tag: 'Chhath Puja', isHighlighted: true),
-              _buildDayCell('7'),
-              _buildDayCell('8'),
-              _buildDayCell('9'),
-              _buildDayCell('10'),
-              // Row 3
-              _buildDayCell('11'),
-              _buildDayCell('12', tag: 'Devutthana..', isHighlighted: true),
-              _buildDayCell('13'),
-              _buildDayCell('14'),
-              _buildDayCell('15'),
-              _buildDayCell('16'),
-              _buildDayCell('17'),
-            ],
+            children: cells,
           )
         ],
       ),
@@ -186,83 +224,214 @@ class FestivalsView extends StatelessWidget {
     );
   }
 
-  Widget _buildDayCell(String day, {String? tag, bool isHighlighted = false}) {
-    return Container(
-      padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(
-        color: isHighlighted ? AppColors.primaryContainer.withOpacity(0.05) : Colors.transparent,
-        border: Border.all(color: AppColors.outlineVariant.withOpacity(0.1)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            day,
-            style: TextStyle(
-              fontWeight: isHighlighted ? FontWeight.bold : FontWeight.normal,
-              color: isHighlighted ? AppColors.primaryContainer : AppColors.onSurface,
-              fontSize: 12,
-            ),
-          ),
-          if (tag != null)
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.end,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Container(width: 4, height: 4, decoration: const BoxDecoration(color: AppColors.primaryContainer, shape: BoxShape.circle)),
-                  const SizedBox(height: 2),
-                  WidthSizedBoxMax(
-                    child: Text(
-                      tag,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.bold, color: AppColors.primaryContainer),
-                    ),
-                  ),
-                ],
+  Widget _buildDayCell(
+    BuildContext context,
+    String day, {
+    required DateTime date,
+    List<FestivalCalendarEventDto> events = const [],
+  }) {
+    final tag = _buildEventTag(events);
+    final isHighlighted = events.isNotEmpty;
+    return InkWell(
+      onTap: events.isEmpty ? null : () => _showDayEventsDialog(context, date, events),
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: isHighlighted ? AppColors.primaryContainer.withOpacity(0.05) : Colors.transparent,
+          border: Border.all(color: AppColors.outlineVariant.withOpacity(0.1)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              day,
+              style: TextStyle(
+                fontWeight: isHighlighted ? FontWeight.bold : FontWeight.normal,
+                color: isHighlighted ? AppColors.primaryContainer : AppColors.onSurface,
+                fontSize: 12,
               ),
-            )
-          else
-            const SizedBox.shrink(),
-        ],
+            ),
+            if (tag != null)
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Container(width: 4, height: 4, decoration: const BoxDecoration(color: AppColors.primaryContainer, shape: BoxShape.circle)),
+                    const SizedBox(height: 2),
+                    WidthSizedBoxMax(
+                      child: Text(
+                        tag,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.bold, color: AppColors.primaryContainer),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              const SizedBox.shrink(),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildSideEventsBarBlock() {
+  void _showDayEventsDialog(
+    BuildContext context,
+    DateTime date,
+    List<FestivalCalendarEventDto> events,
+  ) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(' ${_formatFullDate(date)}'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: events.length,
+              separatorBuilder: (_, __) => const Divider(height: 12),
+              itemBuilder: (context, index) {
+                final event = events[index];
+                return Text(
+                  event.name,
+                  style: AppThemes.bodyMd.copyWith(color: AppColors.onSurface),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: AppColors.primaryContainer),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String? _buildEventTag(List<FestivalCalendarEventDto> events) {
+    if (events.isEmpty) return null;
+    if (events.length == 1) return events.first.name;
+    return '${events.first.name} +${events.length - 1}';
+  }
+
+  String _formatEventDate(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+    return '${_monthShort(date.month)} $day, ${_weekdayShort(date.weekday)}';
+  }
+
+  String _formatFeaturedDate(DateTime date) {
+    return '${_monthName(date.month)} ${date.day}';
+  }
+
+  String _eventTypeLabel(String? type) {
+    if (type == null || type.trim().isEmpty) return 'FESTIVAL';
+    return type.trim().toUpperCase();
+  }
+
+  String _monthShort(int month) {
+    const months = [
+      'JAN',
+      'FEB',
+      'MAR',
+      'APR',
+      'MAY',
+      'JUN',
+      'JUL',
+      'AUG',
+      'SEP',
+      'OCT',
+      'NOV',
+      'DEC',
+    ];
+    return months[(month - 1).clamp(0, 11)];
+  }
+
+  String _monthName(int month) {
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return months[(month - 1).clamp(0, 11)];
+  }
+
+  String _weekdayShort(int weekday) {
+    const weekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+    return weekdays[(weekday - 1).clamp(0, 6)];
+  }
+
+  String _formatFullDate(DateTime date) {
+    return '${_monthName(date.month)} ${date.day}, ${date.year}';
+  }
+
+  List<FestivalCalendarEventVm> _featuredEvents(List<FestivalCalendarEventVm> events) {
+    if (events.isEmpty) return [];
+    final today = DateTime.now();
+    final start = DateTime(today.year, today.month, today.day);
+    final end = start.add(const Duration(days: 6));
+    final filtered = events.where((event) {
+      final date = DateTime(event.date.year, event.date.month, event.date.day);
+      return !date.isBefore(start) && !date.isAfter(end);
+    }).toList();
+    filtered.sort((a, b) => a.date.compareTo(b.date));
+    return filtered;
+  }
+
+  Widget _buildSideEventsBarBlock(List<FestivalCalendarEventVm> featuredEvents) {
     return Column(
       children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
-            boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.04), blurRadius: 20, offset: const Offset(0, 4))],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(LucideIcons.star, color: AppColors.primaryContainer, size: 20),
-                  const SizedBox(width: 8),
-                  Text('Featured Festivals', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 18)),
+        if (featuredEvents.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+              boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.04), blurRadius: 20, offset: const Offset(0, 4))],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(LucideIcons.star, color: AppColors.primaryContainer, size: 20),
+                    const SizedBox(width: 8),
+                    Text('Featured Festivals', style: AppThemes.headlineMd.copyWith(color: AppColors.onSurface, fontSize: 18)),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                for (var i = 0; i < featuredEvents.length; i++) ...[
+                  _buildFeaturedFestivalItem(
+                    _formatFeaturedDate(featuredEvents[i].date),
+                    _eventTypeLabel(featuredEvents[i].type),
+                    featuredEvents[i].name,
+                  ),
+                  if (i != featuredEvents.length - 1) const SizedBox(height: 12),
                 ],
-              ),
-              const SizedBox(height: 14),
-              _buildFeaturedFestivalItem('Nov 01', 'Major Festival', 'Diwali', 'The festival of lights, celebrating the victory of light over darkness and the return of Lord Rama.'),
-              const SizedBox(height: 12),
-              _buildFeaturedFestivalItem('Nov 12', 'Vrat', 'Devutthana Ekadashi', 'Fasting for Lord Vishnu. Marks the end of the four-month Chaturmas period.'),
-              const SizedBox(height: 12),
-              _buildFeaturedFestivalItem('Nov 15', 'Full Moon', 'Kartik Purnima', 'A holy day for a ritual bath in sacred rivers. Also celebrated as Dev Deepawali in Varanasi.'),
-            ],
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 16),
+          const SizedBox(height: 16),
+        ],
         
         // Dynamic Card Graphic Module
         Container(
@@ -310,7 +479,7 @@ class FestivalsView extends StatelessWidget {
     );
   }
 
-  Widget _buildFeaturedFestivalItem(String date, String statusLabel, String title, String description) {
+  Widget _buildFeaturedFestivalItem(String date, String statusLabel, String title, [String description = '']) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -334,8 +503,10 @@ class FestivalsView extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.onSurface, fontFamily: 'Manrope')),
-          const SizedBox(height: 4),
-          Text(description, style: const TextStyle(fontSize: 12, color: AppColors.onSurfaceVariant, height: 1.4, fontFamily: 'Manrope')),
+          if (description.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(description, style: const TextStyle(fontSize: 12, color: AppColors.onSurfaceVariant, height: 1.4, fontFamily: 'Manrope')),
+          ],
         ],
       ),
     );

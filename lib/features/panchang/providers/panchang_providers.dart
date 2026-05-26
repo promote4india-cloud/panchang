@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../config/app_config.dart';
 import '../../../config/user_config.dart';
+import '../../../assset/zodiac_icons.dart';
+import '../../../providers/user_location_provider.dart';
 import '../data/panchang_api.dart';
 import '../models/panchang_models.dart';
 
@@ -10,9 +12,10 @@ final panchangApiProvider = Provider<PanchangApiClient>((ref) {
 });
 
 final dashboardQueryProvider = Provider<DashboardQuery>((ref) {
+  final location = ref.watch(userLocationProvider).value;
   return DashboardQuery(
-    lat: UserConfig.latitude,
-    lon: UserConfig.longitude,
+    lat: location?.latitude ?? UserConfig.latitude,
+    lon: location?.longitude ?? UserConfig.longitude,
     tz: UserConfig.timezone,
     language: UserConfig.language,
   );
@@ -75,15 +78,15 @@ final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((ref) asyn
     sunsetLabel: _formatTime(panchang.sunMoon.sunsetLocal),
     auspiciousMuhurats: auspiciousList,
     inauspiciousMuhurats: inauspiciousList,
-    rashifalSign: _formatZodiacLabel(horoscope.sign.isEmpty
+    rashifalSign: zodiacLabelFor(horoscope.sign.isEmpty
       ? UserConfig.zodiacSign
       : horoscope.sign),
     rashifalText: horoscope.prediction?.trim().isNotEmpty == true
       ? horoscope.prediction!
       : 'No horoscope available for today.',
-    rashifalSymbol: _zodiacSymbol(horoscope.sign.isEmpty
-        ? UserConfig.zodiacSign
-        : horoscope.sign),
+    rashifalSymbol: zodiacSymbolFor(horoscope.sign.isEmpty
+      ? UserConfig.zodiacSign
+      : horoscope.sign),
     upcomingDateLabel: upcomingItem == null
         ? '--'
         : _formatShortDate(upcomingItem.date, upcomingItem.weekday),
@@ -109,42 +112,6 @@ bool _isInauspiciousCategory(String? value) {
   return value.toLowerCase() == 'inauspicious';
 }
 
-String _formatZodiacLabel(String value) {
-  if (value.isEmpty) return '';
-  final normalized = value.toLowerCase();
-  return normalized[0].toUpperCase() + normalized.substring(1);
-}
-
-String _zodiacSymbol(String value) {
-  switch (value.toLowerCase()) {
-    case 'aries':
-      return '♈';
-    case 'taurus':
-      return '♉';
-    case 'gemini':
-      return '♊';
-    case 'cancer':
-      return '♋';
-    case 'leo':
-      return '♌';
-    case 'virgo':
-      return '♍';
-    case 'libra':
-      return '♎';
-    case 'scorpio':
-      return '♏';
-    case 'sagittarius':
-      return '♐';
-    case 'capricorn':
-      return '♑';
-    case 'aquarius':
-      return '♒';
-    case 'pisces':
-      return '♓';
-    default:
-      return '';
-  }
-}
 
 String _formatRange(String? start, String? end) {
   if (start == null || end == null) return '--';

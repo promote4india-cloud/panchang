@@ -1,23 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../config/user_config.dart';
 import '../../../constants/app_colors.dart';
 import '../../../constants/app_themes.dart';
+import '../../../providers/user_location_provider.dart';
 
-class SettingsView extends StatefulWidget {
+class SettingsView extends ConsumerStatefulWidget {
   const SettingsView({super.key});
 
   @override
-  State<SettingsView> createState() => _SettingsViewState();
+  ConsumerState<SettingsView> createState() => _SettingsViewState();
 }
 
-class _SettingsViewState extends State<SettingsView> {
+class _SettingsViewState extends ConsumerState<SettingsView> {
   // Local state properties managing interactive toggle switch targets
-  bool _automaticDetection = true;
   bool _dailyRahuKaalReminder = true;
   bool _importantFestivalsReminder = false;
 
   @override
   Widget build(BuildContext context) {
+    final locationState = ref.watch(userLocationProvider);
+    final autoDetection = locationState.value?.automaticDetection ?? true;
+    final isLocationBusy = locationState.isLoading;
+
     return SingleChildScrollView(
       // Clear bounds spacing allowance logic parameters for fixed bottom nav bar
       padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 24.0, bottom: 120.0),
@@ -54,7 +61,7 @@ class _SettingsViewState extends State<SettingsView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Aravind Sharma', style: AppThemes.headlineSm.copyWith(color: AppColors.onSurface)),
+                      Text(UserConfig.name, style: AppThemes.headlineSm.copyWith(color: AppColors.onSurface)),
                       const SizedBox(height: 2),
                       Text('Vedic Practitioner since 2018', style: AppThemes.bodySm.copyWith(color: AppColors.onSurfaceVariant)),
                     ],
@@ -80,8 +87,8 @@ class _SettingsViewState extends State<SettingsView> {
                   icon: LucideIcons.locate,
                   title: 'Automatic Detection',
                   subtitle: 'Uses GPS for precise Muhurta',
-                  value: _automaticDetection,
-                  onChanged: (val) => setState(() => _automaticDetection = val),
+                  value: autoDetection,
+                  onChanged: isLocationBusy ? null : (val) => _handleAutomaticDetectionChange(val),
                   showDivider: true,
                 ),
                 _buildNavigationRow(
@@ -214,7 +221,7 @@ class _SettingsViewState extends State<SettingsView> {
     required String title,
     required String subtitle,
     required bool value,
-    required ValueChanged<bool> onChanged,
+    required ValueChanged<bool>? onChanged,
     bool showDivider = false,
   }) {
     return Column(
@@ -288,6 +295,53 @@ class _SettingsViewState extends State<SettingsView> {
             Divider(color: AppColors.outlineVariant.withOpacity(0.3), height: 1, indent: 54),
         ],
       ),
+    );
+  }
+
+  Future<void> _handleAutomaticDetectionChange(bool enabled) async {
+    await ref.read(userLocationProvider.notifier).setAutomaticDetection(enabled);
+    if (!enabled) return;
+
+    final permissionOk = await _ensureLocationPermission();
+    if (!permissionOk) return;
+
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      await ref.read(userLocationProvider.notifier).setCoordinates(
+            position.latitude,
+            position.longitude,
+          );
+    } catch (error) {
+      _showSnack('Unable to fetch current location.');
+    }
+  }
+
+  Future<bool> _ensureLocationPermission() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      _showSnack('Location services are disabled.');
+      return false;
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+      _showSnack('Location permission denied.');
+      return false;
+    }
+
+    return true;
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 }

@@ -1,0 +1,13 @@
+{
+  "name": "Aarav Sharma",
+  "gender": "male",
+  "birthDate": "1992-08-14",
+  "birthTime": "06:45",
+  "birthPlace": "Jaipur, Rajasthan, India",
+  "zodiacSign": "leo",
+  "tradition": "amanta",
+  "latitude": 26.9124,
+  "longitude": 75.7873,
+  "timezone": "Asia/Kolkata",
+  "language": "en"
+}
