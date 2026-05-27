@@ -16,14 +16,16 @@ final dashboardQueryProvider = Provider<DashboardQuery>((ref) {
   return DashboardQuery(
     lat: location?.latitude ?? UserConfig.latitude,
     lon: location?.longitude ?? UserConfig.longitude,
-    tz: UserConfig.timezone,
+    tz: location?.timezone ?? UserConfig.timezone,
     language: UserConfig.language,
   );
 });
 
-final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((ref) async {
+final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((
+  ref,
+) async {
   final api = ref.read(panchangApiProvider);
-  final query = ref.read(dashboardQueryProvider);
+  final query = ref.watch(dashboardQueryProvider);
 
   final results = await Future.wait([
     api.fetchPanchangToday(query),
@@ -46,31 +48,34 @@ final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((ref) asyn
       .where((item) => !_isIslamicType(item.type))
       .toList();
 
-    final auspiciousList = muhurat.muhurats
+  final auspiciousList = muhurat.muhurats
       .where((item) => _isAuspiciousCategory(item.category))
-      .map((item) => PanchangMuhuratVm(
-            name: item.name,
-            timeRange: _formatRange(item.start, item.end),
-          ))
+      .map(
+        (item) => PanchangMuhuratVm(
+          name: item.name,
+          timeRange: _formatRange(item.start, item.end),
+        ),
+      )
       .toList();
-    final inauspiciousList = muhurat.muhurats
+  final inauspiciousList = muhurat.muhurats
       .where((item) => _isInauspiciousCategory(item.category))
-      .map((item) => PanchangMuhuratVm(
-            name: item.name,
-            timeRange: _formatRange(item.start, item.end),
-          ))
+      .map(
+        (item) => PanchangMuhuratVm(
+          name: item.name,
+          timeRange: _formatRange(item.start, item.end),
+        ),
+      )
       .toList();
 
-  final festivalTitle = visibleToday.isNotEmpty
-      ? visibleToday.first.name
-      : '';
-      // : 'No festival today';
+  final festivalTitle = visibleToday.isNotEmpty ? visibleToday.first.name : '';
+  // : 'No festival today';
 
   final upcomingItem = _firstOrNull(visibleUpcoming);
 
   return PanchangDashboardVm(
     dateLabel: _formatDateLabel(panchang.date, panchang.weekday),
-    lunarLabel: '${panchang.masa.name} ${panchang.tithi.paksha} ${panchang.tithi.name}',
+    lunarLabel:
+        '${panchang.masa.name} ${panchang.tithi.paksha} ${panchang.tithi.name}',
     festivalTitle: festivalTitle,
     tithiLabel: panchang.tithi.name,
     nakshatraLabel: panchang.nakshatra.name,
@@ -78,15 +83,15 @@ final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((ref) asyn
     sunsetLabel: _formatTime(panchang.sunMoon.sunsetLocal),
     auspiciousMuhurats: auspiciousList,
     inauspiciousMuhurats: inauspiciousList,
-    rashifalSign: zodiacLabelFor(horoscope.sign.isEmpty
-      ? UserConfig.zodiacSign
-      : horoscope.sign),
+    rashifalSign: zodiacLabelFor(
+      horoscope.sign.isEmpty ? UserConfig.zodiacSign : horoscope.sign,
+    ),
     rashifalText: horoscope.prediction?.trim().isNotEmpty == true
-      ? horoscope.prediction!
-      : 'No horoscope available for today.',
-    rashifalSymbol: zodiacSymbolFor(horoscope.sign.isEmpty
-      ? UserConfig.zodiacSign
-      : horoscope.sign),
+        ? horoscope.prediction!
+        : 'No horoscope available for today.',
+    rashifalSymbol: zodiacSymbolFor(
+      horoscope.sign.isEmpty ? UserConfig.zodiacSign : horoscope.sign,
+    ),
     upcomingDateLabel: upcomingItem == null
         ? '--'
         : _formatShortDate(upcomingItem.date, upcomingItem.weekday),
@@ -111,7 +116,6 @@ bool _isInauspiciousCategory(String? value) {
   if (value == null || value.isEmpty) return false;
   return value.toLowerCase() == 'inauspicious';
 }
-
 
 String _formatRange(String? start, String? end) {
   if (start == null || end == null) return '--';

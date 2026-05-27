@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../panchang/data/panchang_api.dart';
 import '../../panchang/models/panchang_models.dart';
 import '../../panchang/providers/panchang_providers.dart';
+import '../data/spiritual_tips.dart';
 
 class FestivalCalendarEventVm {
   final DateTime date;
@@ -36,7 +37,9 @@ class FestivalsCalendarVm {
   });
 }
 
-final festivalsCalendarProvider = FutureProvider<FestivalsCalendarVm>((ref) async {
+final festivalsCalendarProvider = FutureProvider<FestivalsCalendarVm>((
+  ref,
+) async {
   final api = ref.read(panchangApiProvider);
   final baseQuery = ref.read(dashboardQueryProvider);
   final activeMonth = ref.watch(festivalMonthProvider);
@@ -47,7 +50,11 @@ final festivalsCalendarProvider = FutureProvider<FestivalsCalendarVm>((ref) asyn
   final results = await Future.wait([
     api.fetchPanchang(_queryForDate(baseQuery, startDate)),
     api.fetchPanchang(_queryForDate(baseQuery, endDate)),
-    api.fetchFestivalsCalendar(baseQuery, year: activeMonth.year, month: activeMonth.month),
+    api.fetchFestivalsCalendar(
+      baseQuery,
+      year: activeMonth.year,
+      month: activeMonth.month,
+    ),
   ]);
 
   final startPanchang = results[0] as PanchangTodayDto;
@@ -55,33 +62,44 @@ final festivalsCalendarProvider = FutureProvider<FestivalsCalendarVm>((ref) asyn
   final calendar = results[2] as FestivalCalendarResponseDto;
 
   final filteredDays = calendar.days
-      .map((day) => FestivalCalendarDayDto(
-            day: day.day,
-            weekday: day.weekday,
-            events: day.events.where((event) => !_isIslamicType(event.type)).toList(),
-          ))
+      .map(
+        (day) => FestivalCalendarDayDto(
+          day: day.day,
+          weekday: day.weekday,
+          events: day.events
+              .where((event) => !_isIslamicType(event.type))
+              .toList(),
+        ),
+      )
       .toList();
 
   final events = <FestivalCalendarEventVm>[];
   for (final day in filteredDays) {
     for (final event in day.events) {
-      events.add(FestivalCalendarEventVm(
-        date: DateTime(calendar.year, calendar.month, day.day),
-        weekday: day.weekday,
-        name: event.name,
-        type: event.type,
-      ));
+      events.add(
+        FestivalCalendarEventVm(
+          date: DateTime(calendar.year, calendar.month, day.day),
+          weekday: day.weekday,
+          name: event.name,
+          type: event.type,
+        ),
+      );
     }
   }
 
   events.sort((a, b) => a.date.compareTo(b.date));
 
   final monthLabel = '${_monthName(calendar.month)} ${calendar.year}';
-  final startPurnimanta = _stripAdhik(startPanchang.hinduMonthAndYear.monthPurnimanta);
+  final startPurnimanta = _stripAdhik(
+    startPanchang.hinduMonthAndYear.monthPurnimanta,
+  );
   final startAmanta = _stripAdhik(startPanchang.hinduMonthAndYear.monthAmanta);
-  final endPurnimanta = _stripAdhik(endPanchang.hinduMonthAndYear.monthPurnimanta);
+  final endPurnimanta = _stripAdhik(
+    endPanchang.hinduMonthAndYear.monthPurnimanta,
+  );
   final endAmanta = _stripAdhik(endPanchang.hinduMonthAndYear.monthAmanta);
-  final masaRangeLabel = 'MASA: $startPurnimanta/$startAmanta - $endPurnimanta/$endAmanta';
+  final masaRangeLabel =
+      'MASA: $startPurnimanta/$startAmanta - $endPurnimanta/$endAmanta';
 
   return FestivalsCalendarVm(
     year: calendar.year,
@@ -91,6 +109,18 @@ final festivalsCalendarProvider = FutureProvider<FestivalsCalendarVm>((ref) asyn
     days: filteredDays,
     events: events,
   );
+});
+
+final spiritualTipProvider = FutureProvider<String>((ref) async {
+  final api = ref.read(panchangApiProvider);
+  final query = ref.read(dashboardQueryProvider);
+  final panchang = await api.fetchPanchangToday(query);
+
+  final monthName = panchang.hinduMonthAndYear.monthPurnimanta.isNotEmpty
+      ? panchang.hinduMonthAndYear.monthPurnimanta
+      : panchang.masa.name;
+
+  return spiritualTipForHinduMonth(monthName);
 });
 
 class FestivalMonthNotifier extends Notifier<DateTime> {
@@ -105,9 +135,11 @@ class FestivalMonthNotifier extends Notifier<DateTime> {
   }
 }
 
-final festivalMonthProvider = NotifierProvider<FestivalMonthNotifier, DateTime>(() {
-  return FestivalMonthNotifier();
-});
+final festivalMonthProvider = NotifierProvider<FestivalMonthNotifier, DateTime>(
+  () {
+    return FestivalMonthNotifier();
+  },
+);
 
 DashboardQuery _queryForDate(DashboardQuery baseQuery, DateTime date) {
   return DashboardQuery(

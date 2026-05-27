@@ -6,6 +6,7 @@ class UserConfig {
   static const String _birthPlaceDefault = 'Jaipur, Rajasthan, India';
   static const String _zodiacSignDefault = 'leo';
   static const String _traditionDefault = 'amanta';
+  static const String _locationLabelDefault = 'Varanasi, India';
 
   static const double _latitudeDefault = 26.9124;
   static const double _longitudeDefault = 75.7873;
@@ -27,6 +28,8 @@ class UserConfig {
   static String get birthPlace => _string('birthPlace', _birthPlaceDefault);
   static String get zodiacSign => _string('zodiacSign', _zodiacSignDefault);
   static String get tradition => _string('tradition', _traditionDefault);
+  static String get locationLabel =>
+      _string('locationLabel', _locationLabelDefault);
 
   static double get latitude => _double('latitude', _latitudeDefault);
   static double get longitude => _double('longitude', _longitudeDefault);

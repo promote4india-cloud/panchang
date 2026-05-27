@@ -29,6 +29,22 @@ class UserConfigDevHelper {
     await saveOverrides(updated);
   }
 
+  static Future<void> updateLocation({
+    required double latitude,
+    required double longitude,
+    required String timezone,
+    required String label,
+  }) async {
+    if (!kDebugMode) return;
+
+    final updated = Map<String, dynamic>.from(UserConfig.overrides);
+    updated['latitude'] = latitude;
+    updated['longitude'] = longitude;
+    updated['timezone'] = timezone;
+    updated['locationLabel'] = label;
+    await saveOverrides(updated);
+  }
+
   static Future<void> saveOverrides(Map<String, dynamic> overrides) async {
     if (!kDebugMode) return;
 
