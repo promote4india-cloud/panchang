@@ -49,7 +49,7 @@ app.*.map.json
 # backend related
 .env
 .venv/
-data/
+*/services/data/
 __pycache__/
 *.pyc
 *.pyo
