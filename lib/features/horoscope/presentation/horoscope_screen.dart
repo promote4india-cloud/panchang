@@ -30,6 +30,8 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
   Widget build(BuildContext context) {
     final state = ref.watch(horoscopeProvider);
     final forecast = ref.watch(horoscopeDetailsProvider);
+    final c = AppColorsOf(context);
+
     if (!_didSetInitialScroll) {
       final index = zodiacIconItems.indexWhere((item) => item.label == state.selectedZodiac);
       if (index >= 0) {
@@ -45,18 +47,23 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
     }
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 24.0, bottom: 120.0),
+      padding: EdgeInsets.only(
+        left: 16.0,
+        right: 16.0,
+        top: 24.0,
+        bottom: MediaQuery.of(context).viewPadding.bottom + 20,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             '${state.activeDuration} Horoscope',
-            style: const TextStyle(fontFamily: 'Epilogue', fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.onSurface),
+            style: TextStyle(fontFamily: 'Epilogue', fontSize: 28, fontWeight: FontWeight.bold, color: c.onSurface),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'Align your day with cosmic wisdom. Predictions based on the Vedic Lunar Calendar.',
-            style: TextStyle(fontSize: 16, color: AppColors.onSurfaceVariant, height: 1.4),
+            style: TextStyle(fontSize: 16, color: c.onSurfaceVariant, height: 1.4),
           ),
           const SizedBox(height: 20),
 
@@ -66,12 +73,12 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
             children: [
               Container(
                 padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(color: Colors.black.withOpacity(0.03), borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(color: c.subtleBg, borderRadius: BorderRadius.circular(12)),
                 child: Row(
                   children: [
-                    _buildTextTabButton(ref, state.activeDuration, 'Daily'),
-                    _buildTextTabButton(ref, state.activeDuration, 'Weekly'),
-                    _buildTextTabButton(ref, state.activeDuration, 'Monthly'),
+                    _buildTextTabButton(ref, c, state.activeDuration, 'Daily'),
+                    _buildTextTabButton(ref, c, state.activeDuration, 'Weekly'),
+                    _buildTextTabButton(ref, c, state.activeDuration, 'Monthly'),
                   ],
                 ),
               ),
@@ -88,7 +95,7 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
               clipBehavior: Clip.none,
               children: [
                 ...zodiacIconItems.expand((item) => [
-                  _buildZodiacCard(ref, state.selectedZodiac, item.icon, item.label),
+                  _buildZodiacCard(ref, c, state.selectedZodiac, item.icon, item.label),
                   const SizedBox(width: 16),
                 ]),
               ],
@@ -97,29 +104,29 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
           const SizedBox(height: 24),
 
           // Detailed Prediction Card
-          _buildPredictionCard(state, forecast),
+          _buildPredictionCard(context, state, forecast),
           const SizedBox(height: 24),
         ],
       ),
     );
   }
 
-  Widget _buildTextTabButton(WidgetRef ref, String activeDuration, String targetText) {
+  Widget _buildTextTabButton(WidgetRef ref, AppColorsOf c, String activeDuration, String targetText) {
     final bool isSelected = activeDuration == targetText;
     return GestureDetector(
       onTap: () => ref.read(horoscopeProvider.notifier).handleDurationChange(targetText),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-        decoration: BoxDecoration(color: isSelected ? AppColors.primary : Colors.transparent, borderRadius: BorderRadius.circular(8)),
+        decoration: BoxDecoration(color: isSelected ? c.primary : Colors.transparent, borderRadius: BorderRadius.circular(8)),
         child: Text(
           targetText,
-          style: TextStyle(color: isSelected ? Colors.white : AppColors.onSurfaceVariant, fontWeight: FontWeight.bold, fontSize: 14),
+          style: TextStyle(color: isSelected ? Colors.white : c.onSurfaceVariant, fontWeight: FontWeight.bold, fontSize: 14),
         ),
       ),
     );
   }
 
-  Widget _buildZodiacCard(WidgetRef ref, String activeZodiac, IconData icon, String targetZodiac) {
+  Widget _buildZodiacCard(WidgetRef ref, AppColorsOf c, String activeZodiac, IconData icon, String targetZodiac) {
     final bool isSelected = activeZodiac == targetZodiac;
     final symbol = zodiacSymbolFor(targetZodiac);
     return InkWell(
@@ -131,9 +138,9 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
           width: 100,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: c.card,
             borderRadius: BorderRadius.circular(16),
-            border: Border(bottom: BorderSide(color: isSelected ? AppColors.primary : Colors.transparent, width: 4)),
+            border: Border(bottom: BorderSide(color: isSelected ? c.primary : Colors.transparent, width: 4)),
             boxShadow: [BoxShadow(color: Colors.black.withOpacity(isSelected ? 0.1 : 0.03), blurRadius: 10, offset: const Offset(0, 2))],
           ),
           child: Column(
@@ -144,7 +151,7 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.w700,
-                  color: isSelected ? AppColors.primary : AppColors.onSurfaceVariant,
+                  color: isSelected ? c.primary : c.onSurfaceVariant,
                 ),
               ),
               const SizedBox(height: 6),
@@ -156,7 +163,7 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                      color: AppColors.onSurface,
+                      color: c.onSurface,
                     ),
                   ),
                 ),
@@ -172,28 +179,30 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
 
 
 Widget _buildPredictionCard(
+  BuildContext context,
   HoroscopeState state,
   AsyncValue<HoroscopePredictionDto> forecast,
 ) {
+  final c = AppColorsOf(context);
   return Container(
     padding: const EdgeInsets.all(20),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: c.card,
       borderRadius: BorderRadius.circular(24),
-      border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+      border: Border.all(color: c.border),
       boxShadow: [
         BoxShadow(
-          color: AppColors.primary.withOpacity(0.08),
+          color: c.primary.withOpacity(0.08),
           blurRadius: 20,
           offset: const Offset(0, 4),
         ),
       ],
     ),
     child: forecast.when(
-      loading: () => const Center(
+      loading: () => Center(
         child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 24),
-          child: CircularProgressIndicator(color: AppColors.primary),
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          child: CircularProgressIndicator(color: c.primary),
         ),
       ),
       error: (error, _) => Column(
@@ -201,16 +210,16 @@ Widget _buildPredictionCard(
         children: [
           Text(
             '${state.selectedZodiac} Prediction',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
-              color: AppColors.onSurface,
+              color: c.onSurface,
             ),
           ),
           const SizedBox(height: 12),
           Text(
             error.toString(),
-            style: const TextStyle(fontSize: 14, color: AppColors.error),
+            style: TextStyle(fontSize: 14, color: c.error),
           ),
         ],
       ),
@@ -236,16 +245,16 @@ Widget _buildPredictionCard(
                   width: 56,
                   height: 56,
                   decoration: BoxDecoration(
-                    color: AppColors.primaryContainer.withOpacity(0.15),
+                    color: c.primaryContainer.withOpacity(0.15),
                     shape: BoxShape.circle,
                   ),
                   child: Center(
                     child: Text(
                       zodiacSymbolFor(state.selectedZodiac),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.w700,
-                        color: AppColors.primaryContainer,
+                        color: c.primaryContainer,
                       ),
                     ),
                   ),
@@ -257,19 +266,19 @@ Widget _buildPredictionCard(
                     children: [
                       Text(
                         '${state.selectedZodiac} Prediction',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
-                          color: AppColors.onSurface,
+                          color: c.onSurface,
                         ),
                       ),
                       if (dateLabel.isNotEmpty) ...[
                         const SizedBox(height: 2),
                         Text(
                           dateLabel,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color: AppColors.onSurfaceVariant,
+                            color: c.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -280,13 +289,13 @@ Widget _buildPredictionCard(
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
-                      color: AppColors.primaryContainer.withOpacity(0.15),
+                      color: c.primaryContainer.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(100),
                     ),
                     child: Text(
                       ratingLabel,
-                      style: const TextStyle(
-                        color: AppColors.onPrimaryContainer,
+                      style: TextStyle(
+                        color: c.onPrimaryContainer,
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
                       ),
@@ -297,10 +306,10 @@ Widget _buildPredictionCard(
             const SizedBox(height: 20),
             Text(
               '"$prediction"',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 18,
                 fontStyle: FontStyle.italic,
-                color: AppColors.onSurface,
+                color: c.onSurface,
                 height: 1.5,
               ),
             ),
@@ -309,12 +318,12 @@ Widget _buildPredictionCard(
               Wrap(
                 spacing: 10,
                 runSpacing: 10,
-                children: _buildRatingChips(data.ratings),
+                children: _buildRatingChips(context, data.ratings),
               ),
             ],
             if (showCategories) ...[
               const SizedBox(height: 20),
-              ..._buildCategoryRows(data.categories),
+              ..._buildCategoryRows(context, data.categories),
             ],
           ],
         );
@@ -349,26 +358,27 @@ double? _ratingValue(Map<String, dynamic>? ratings, String key) {
   return null;
 }
 
-Widget _buildRatingChip(String label, double rating) {
+Widget _buildRatingChip(BuildContext context, String label, double rating) {
+  final c = AppColorsOf(context);
   final display = rating.toStringAsFixed(rating % 1 == 0 ? 0 : 1);
   return Container(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     decoration: BoxDecoration(
-      color: AppColors.primaryContainer.withOpacity(0.12),
+      color: c.primaryContainer.withOpacity(0.12),
       borderRadius: BorderRadius.circular(999),
     ),
     child: Text(
       '$label $display/5',
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w600,
-        color: AppColors.onPrimaryContainer,
+        color: c.onPrimaryContainer,
       ),
     ),
   );
 }
 
-List<Widget> _buildRatingChips(Map<String, dynamic>? ratings) {
+List<Widget> _buildRatingChips(BuildContext context, Map<String, dynamic>? ratings) {
   if (ratings == null || ratings.isEmpty) return const [];
   const order = [
     'health',
@@ -382,6 +392,7 @@ List<Widget> _buildRatingChips(Map<String, dynamic>? ratings) {
       .map((key) => MapEntry(key, _ratingValue(ratings, key)))
       .where((entry) => entry.value != null)
       .map((entry) => _buildRatingChip(
+            context,
             _ratingLabelForKey(entry.key),
             entry.value!,
           ))
@@ -404,11 +415,12 @@ String _ratingLabelForKey(String key) {
   }
 }
 
-List<Widget> _buildCategoryRows(Map<String, dynamic>? categories) {
+List<Widget> _buildCategoryRows(BuildContext context, Map<String, dynamic>? categories) {
   if (categories == null) return const [];
   final rows = <Widget>[];
   void addRow(IconData icon, String label, String key) {
     rows.add(_buildCategoryPredictionRow(
+      context,
       icon,
       label,
       _categoryText(categories, key),
@@ -428,11 +440,12 @@ List<Widget> _buildCategoryRows(Map<String, dynamic>? categories) {
   return rows;
 }
 
-Widget _buildCategoryPredictionRow(IconData icon, String title, String body) {
+Widget _buildCategoryPredictionRow(BuildContext context, IconData icon, String title, String body) {
+  final c = AppColorsOf(context);
   return Container(
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
-      color: Colors.black.withOpacity(0.015),
+      color: c.subtleBg,
       borderRadius: BorderRadius.circular(16),
     ),
     child: Column(
@@ -440,15 +453,15 @@ Widget _buildCategoryPredictionRow(IconData icon, String title, String body) {
       children: [
         Row(
           children: [
-            Icon(icon, color: AppColors.primary, size: 18),
+            Icon(icon, color: c.primary, size: 18),
             const SizedBox(width: 8),
             Text(
               title.toUpperCase(),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
                 letterSpacing: 0.5,
-                color: AppColors.primary,
+                color: c.primary,
               ),
             ),
           ],
@@ -458,7 +471,7 @@ Widget _buildCategoryPredictionRow(IconData icon, String title, String body) {
           body,
           style: TextStyle(
             fontSize: 14,
-            color: AppColors.onSurfaceVariant,
+            color: c.onSurfaceVariant,
             height: 1.4,
           ),
         ),

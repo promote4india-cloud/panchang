@@ -7,6 +7,8 @@ import '../../../constants/app_themes.dart';
 import '../../../assset/zodiac_icons.dart';
 import '../models/panchang_models.dart';
 import '../providers/panchang_providers.dart';
+import '../../../providers/app_providers.dart';
+import '../../../features/festivals/providers/festivals_providers.dart';
 
 class PanchangDashboardView extends ConsumerWidget {
 	const PanchangDashboardView({super.key});
@@ -14,10 +16,16 @@ class PanchangDashboardView extends ConsumerWidget {
 	@override
 	Widget build(BuildContext context, WidgetRef ref) {
 		final dashboard = ref.watch(panchangDashboardProvider);
+		final spiritualTip = ref.watch(spiritualTipProvider);
 
 		return dashboard.when(
 			data: (vm) => SingleChildScrollView(
-				padding: const EdgeInsets.only(left: 16, right: 16, top: 20, bottom: 140),
+				padding: EdgeInsets.only(
+					left: 16,
+					right: 16,
+					top: 20,
+					bottom: MediaQuery.of(context).viewPadding.bottom + 20,
+				),
 				child: Column(
 					crossAxisAlignment: CrossAxisAlignment.stretch,
 					children: [
@@ -28,7 +36,7 @@ class PanchangDashboardView extends ConsumerWidget {
 										vm.dateLabel,
 										style: AppThemes.bodyMd.copyWith(
 											fontWeight: FontWeight.w600,
-											color: AppColors.onSurface,
+											color: AppColorsOf(context).onSurface,
 										),
 									),
 									const SizedBox(height: 6),
@@ -36,7 +44,7 @@ class PanchangDashboardView extends ConsumerWidget {
 										vm.lunarLabel,
 										style: AppThemes.bodyMd.copyWith(
 											fontWeight: FontWeight.bold,
-											color: AppColors.primary,
+											color: AppColorsOf(context).primary,
 										),
 									),
 								],
@@ -91,7 +99,9 @@ class PanchangDashboardView extends ConsumerWidget {
 						const SizedBox(height: 20),
 						Text(
 							'Muhurat Timings',
-							style: AppThemes.headlineSm,
+							style: AppThemes.headlineSm.copyWith(
+								color: AppColorsOf(context).onSurface,
+							),
 						),
 						const SizedBox(height: 10),
 						_MuhuratScroller(
@@ -106,7 +116,11 @@ class PanchangDashboardView extends ConsumerWidget {
 							isPositive: false,
 						),
 						const SizedBox(height: 22),
-						_SectionHeader(title: 'Daily Rashifal', actionText: 'View All'),
+						_SectionHeader(
+							title: 'Daily Rashifal',
+							actionText: 'View All',
+							onActionTap: () => ref.read(navigationProvider.notifier).changeTab(1),
+						),
 						const SizedBox(height: 10),
 						_RashifalCard(
 							sign: vm.rashifalSign,
@@ -122,15 +136,12 @@ class PanchangDashboardView extends ConsumerWidget {
 							cta: 'Set Reminder',
 						),
 						const SizedBox(height: 18),
-						_AstroInsightCard(
-							title: 'Astrological Insights',
-							subtitle: 'Connect with the cosmos today.',
-						),
+						_SpiritualTipCard(spiritualTip: spiritualTip),
 					],
 				),
 			),
-			loading: () => const Center(
-				child: CircularProgressIndicator(color: AppColors.primary),
+			loading: () => Center(
+				child: CircularProgressIndicator(color: AppColorsOf(context).primary),
 			),
 			error: (error, stackTrace) => _ErrorState(
 				message: error.toString(),
@@ -147,12 +158,13 @@ class _FestivalCard extends StatelessWidget {
 
 	@override
 	Widget build(BuildContext context) {
+		final c = AppColorsOf(context);
 		return Container(
 			padding: const EdgeInsets.all(14),
 			decoration: BoxDecoration(
-				color: AppColors.primaryContainer.withOpacity(0.08),
+				color: c.primaryContainer.withOpacity(0.08),
 				borderRadius: BorderRadius.circular(16),
-				border: Border.all(color: AppColors.primaryContainer.withOpacity(0.2)),
+				border: Border.all(color: c.primaryContainer.withOpacity(0.2)),
 			),
 			child: Row(
 				children: [
@@ -160,7 +172,7 @@ class _FestivalCard extends StatelessWidget {
 						width: 44,
 						height: 44,
 						decoration: BoxDecoration(
-							color: AppColors.primaryContainer,
+							color: c.primaryContainer,
 							shape: BoxShape.circle,
 						),
 						child: const Icon(LucideIcons.home, color: Colors.white),
@@ -172,20 +184,20 @@ class _FestivalCard extends StatelessWidget {
 							children: [
 								Text(
 									'Festival Today',
-									style: AppThemes.bodySm,
+									style: AppThemes.bodySm.copyWith(color: c.onSurfaceVariant),
 								),
 								const SizedBox(height: 4),
 								Text(
 									title,
 									style: AppThemes.bodyMd.copyWith(
 										fontWeight: FontWeight.bold,
-										color: AppColors.onSurface,
+										color: c.onSurface,
 									),
 								),
 							],
 						),
 					),
-					const Icon(LucideIcons.chevronRight, color: AppColors.primaryContainer),
+					Icon(LucideIcons.chevronRight, color: c.primaryContainer),
 				],
 			),
 		);
@@ -205,23 +217,24 @@ class _InfoTile extends StatelessWidget {
 
 	@override
 	Widget build(BuildContext context) {
+		final c = AppColorsOf(context);
 		return Container(
 			padding: const EdgeInsets.all(12),
 			decoration: BoxDecoration(
-				color: Colors.white,
+				color: c.card,
 				borderRadius: BorderRadius.circular(12),
-				border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+				border: Border.all(color: c.border),
 			),
 			child: Column(
 				crossAxisAlignment: CrossAxisAlignment.start,
 				children: [
 					Row(
 						children: [
-							Icon(icon, size: 16, color: AppColors.primaryContainer),
+							Icon(icon, size: 16, color: c.primaryContainer),
 							const SizedBox(width: 6),
 							Text(
 								title,
-								style: AppThemes.labelMd,
+								style: AppThemes.labelMd.copyWith(color: c.onSurfaceVariant),
 							),
 						],
 					),
@@ -230,7 +243,7 @@ class _InfoTile extends StatelessWidget {
 						value,
 						style: AppThemes.bodyMd.copyWith(
 							fontWeight: FontWeight.bold,
-							color: const Color.fromARGB(255, 70, 72, 72),
+							color: c.onSurface,
 						),
 					),
 				],
@@ -243,28 +256,31 @@ class _SectionHeader extends StatelessWidget {
 	final String title;
 	final String? pillText;
 	final String? actionText;
+	final VoidCallback? onActionTap;
 
 	const _SectionHeader({
 		required this.title,
 		this.pillText,
 		this.actionText,
+		this.onActionTap,
 	});
 
 	@override
 	Widget build(BuildContext context) {
+		final c = AppColorsOf(context);
 		return Row(
 			children: [
 				Expanded(
 					child: Text(
 						title,
-						style: AppThemes.headlineSm,
+						style: AppThemes.headlineSm.copyWith(color: c.onSurface),
 					),
 				),
 				if (pillText != null)
 					Container(
 						padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
 						decoration: BoxDecoration(
-							color: AppColors.primaryContainer,
+							color: c.primaryContainer,
 							borderRadius: BorderRadius.circular(999),
 						),
 						child: Text(
@@ -273,10 +289,17 @@ class _SectionHeader extends StatelessWidget {
 						),
 					),
 				if (actionText != null)
-					Text(
-						actionText!,
-						style: AppThemes.labelMd.copyWith(
-							color: AppColors.primaryContainer,
+					InkWell(
+						onTap: onActionTap,
+						borderRadius: BorderRadius.circular(6),
+						child: Padding(
+							padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+							child: Text(
+								actionText!,
+								style: AppThemes.labelMd.copyWith(
+									color: c.primaryContainer,
+								),
+							),
 						),
 					),
 			],
@@ -297,11 +320,11 @@ class _MuhuratScroller extends StatelessWidget {
 
 	@override
 	Widget build(BuildContext context) {
-		final toneColor = isPositive ? AppColors.primaryContainer : AppColors.error;
+		final c = AppColorsOf(context);
+		final toneColor = isPositive ? c.primaryContainer : c.error;
 		final bgColor = isPositive
-				? Colors.green[50] ?? AppColors.primaryContainer.withOpacity(0.08)
-				: AppColors.errorContainerBg;
-		const nameColor = AppColors.onSurfaceVariant;
+				? (c.isDark ? const Color(0xFF1A2E1A) : Colors.green[50] ?? AppColors.primaryContainer.withOpacity(0.08))
+				: (c.isDark ? const Color(0xFF2E1A1A) : AppColors.errorContainerBg);
 
 		return Column(
 			crossAxisAlignment: CrossAxisAlignment.start,
@@ -325,7 +348,6 @@ class _MuhuratScroller extends StatelessWidget {
 								decoration: BoxDecoration(
 									color: bgColor,
 									borderRadius: BorderRadius.circular(12),
-									// border: Border.all(color: toneColor.withOpacity(0.3)),
 								),
 								child: Column(
 									crossAxisAlignment: CrossAxisAlignment.start,
@@ -338,14 +360,14 @@ class _MuhuratScroller extends StatelessWidget {
 											style: AppThemes.labelMd.copyWith(
                         fontWeight: FontWeight.w800,
 												fontSize: 14,
-												color: nameColor,
+												color: c.onSurfaceVariant,
 											),
 										),
 										Text(
 											item.timeRange,
 											style: AppThemes.bodySm.copyWith(
                         fontWeight: FontWeight.w400,
-												color: const Color.fromARGB(255, 1, 1, 1),
+												color: c.onSurface,
 											),
 										),
 									],
@@ -387,6 +409,7 @@ class _RashifalCardState extends State<_RashifalCard> {
 
 	@override
 	Widget build(BuildContext context) {
+		final c = AppColorsOf(context);
 		final displayText = _expanded
 				? widget.text
 				: _truncateWords(widget.text, 20);
@@ -395,9 +418,9 @@ class _RashifalCardState extends State<_RashifalCard> {
 
 		return Container(
 			decoration: BoxDecoration(
-				color: Colors.white,
+				color: c.card,
 				borderRadius: BorderRadius.circular(16),
-				border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+				border: Border.all(color: c.border),
 			),
 			child: InkWell(
 				onTap: () => setState(() => _expanded = !_expanded),
@@ -412,8 +435,8 @@ class _RashifalCardState extends State<_RashifalCard> {
 								height: 30,
 								decoration: BoxDecoration(
 									shape: BoxShape.circle,
-									border: Border.all(color: AppColors.primaryContainer.withOpacity(0.4)),
-									color: AppColors.primaryContainer.withOpacity(0.08),
+									border: Border.all(color: c.primaryContainer.withOpacity(0.4)),
+									color: c.primaryContainer.withOpacity(0.08),
 								),
 								child: Center(
 									child: showSymbol
@@ -421,10 +444,10 @@ class _RashifalCardState extends State<_RashifalCard> {
 											widget.symbol,
 											style: AppThemes.bodyMd.copyWith(
 												fontWeight: FontWeight.bold,
-												color: AppColors.primaryContainer,
+												color: c.primaryContainer,
 											),
 										)
-										: Icon(icon, color: AppColors.primaryContainer),
+										: Icon(icon, color: c.primaryContainer),
 								),
 							),
 							const SizedBox(width: 12),
@@ -436,13 +459,13 @@ class _RashifalCardState extends State<_RashifalCard> {
 											widget.sign,
 											style: AppThemes.bodyMd.copyWith(
 												fontWeight: FontWeight.bold,
-												color: AppColors.onSurface,
+												color: c.onSurface,
 											),
 										),
 										const SizedBox(height: 6),
 										Text(
 											displayText,
-											style: AppThemes.bodySm,
+											style: AppThemes.bodySm.copyWith(color: c.onSurfaceVariant),
 										),
 									],
 								),
@@ -468,19 +491,20 @@ class _UpcomingEventCard extends StatelessWidget {
 
 	@override
 	Widget build(BuildContext context) {
+		final c = AppColorsOf(context);
 		return Container(
 			padding: const EdgeInsets.all(14),
 			decoration: BoxDecoration(
-				color: Colors.white,
+				color: c.card,
 				borderRadius: BorderRadius.circular(16),
-				border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+				border: Border.all(color: c.border),
 			),
 			child: Row(
 				children: [
 					Container(
 						padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
 						decoration: BoxDecoration(
-							color: AppColors.primaryContainer,
+							color: c.primaryContainer,
 							borderRadius: BorderRadius.circular(12),
 						),
 						child: Text(
@@ -498,13 +522,13 @@ class _UpcomingEventCard extends StatelessWidget {
 									name,
 									style: AppThemes.bodyMd.copyWith(
 										fontWeight: FontWeight.bold,
-										color: AppColors.onSurface,
+										color: c.onSurface,
 									),
 								),
 								const SizedBox(height: 4),
 								Text(
 									'Vrat and Puja Vidhi',
-									style: AppThemes.bodySm,
+									style: AppThemes.bodySm.copyWith(color: c.onSurfaceVariant),
 								),
 							],
 						),
@@ -512,7 +536,7 @@ class _UpcomingEventCard extends StatelessWidget {
 					Container(
 						padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
 						decoration: BoxDecoration(
-							color: AppColors.primaryContainer,
+							color: c.primaryContainer,
 							borderRadius: BorderRadius.circular(12),
 						),
 						child: Text(
@@ -526,60 +550,122 @@ class _UpcomingEventCard extends StatelessWidget {
 	}
 }
 
-class _AstroInsightCard extends StatelessWidget {
-	final String title;
-	final String subtitle;
+class _SpiritualTipCard extends StatelessWidget {
+	final AsyncValue<String> spiritualTip;
 
-	const _AstroInsightCard({
-		required this.title,
-		required this.subtitle,
-	});
+	const _SpiritualTipCard({required this.spiritualTip});
 
 	@override
 	Widget build(BuildContext context) {
-		return ClipRRect(
-			borderRadius: BorderRadius.circular(16),
-			child: Stack(
-				children: [
-					SizedBox(
-						height: 160,
-						width: double.infinity,
-						child: Image.network(
-							'https://lh3.googleusercontent.com/aida-public/AB6AXuDjJ4jq73RyQxCpoOLyPSIWgvYSa2sBslby8yViZnO8oFFjP1cbAVbVp7hXqR7r7W4wyxQy-0gqDa5ldnBZOXidQOXjazU3fcPPUqv1nVCi6zyKMaBZzuOIq5mGej9DN0gzB55mmW1t3bdpNgSg7oKEpNgPi-aOBw2aRiX9Xiw3aiclL8v0MGvZnxYzO4ASwYtl6sezwH0b4gDued7HHE6jezRnftO4uFJR4adnv9uJd-uiPMigzQWGp1nc9QXflvHYd6glFP9YntY',
-							fit: BoxFit.cover,
-						),
+		return Container(
+			decoration: BoxDecoration(
+				borderRadius: BorderRadius.circular(16),
+				boxShadow: [
+					BoxShadow(
+						color: AppColors.primaryContainer.withOpacity(0.15),
+						blurRadius: 16,
+						offset: const Offset(0, 6),
 					),
-					Positioned.fill(
-						child: Container(
-							decoration: BoxDecoration(
-								gradient: LinearGradient(
-									colors: [Colors.transparent, Colors.black.withOpacity(0.6)],
-									begin: Alignment.topCenter,
-									end: Alignment.bottomCenter,
+				],
+			),
+			child: ClipRRect(
+				borderRadius: BorderRadius.circular(16),
+				child: Stack(
+					children: [
+						Positioned.fill(
+							child: Image.network(
+								'https://lh3.googleusercontent.com/aida-public/AB6AXuCFKZyD0LVQwZg86F_GVNdtk0xsue64DOzIzm9rJeYit6z3wd8F4_6khnlqcLl86D9rKDlNSpqs5n-wnW9dKfKC7yCQdoB5c4F23k3uHxrvnCAcn5Tkzxd17865_MDmeTbPvD8-UjWUoZEDxiu-YReq9thHypKbongmHvrdYB9e7rkKQBhf6_VVz3b5Eb6bx8aF4Aq4E3GALvIoDBXIL0WEYUulmNWqtXWFZfIQz6MF9rOQBPAU1gCmWJVOXZphhwISFXWVJ8EYoVs',
+								fit: BoxFit.cover,
+							),
+						),
+						Positioned.fill(
+							child: Container(
+								color: AppColors.primaryContainer.withOpacity(0.75),
+							),
+						),
+						Padding(
+							padding: const EdgeInsets.all(16.0),
+							child: spiritualTip.when(
+								data: (tip) => Column(
+									crossAxisAlignment: CrossAxisAlignment.start,
+									mainAxisSize: MainAxisSize.min,
+									children: [
+										const Row(
+											children: [
+												Icon(
+													LucideIcons.sparkles,
+													color: Colors.white,
+													size: 20,
+												),
+												SizedBox(width: 8),
+												Text(
+													'Spiritual Tip',
+													style: TextStyle(
+														color: Colors.white,
+														fontSize: 16,
+														fontWeight: FontWeight.bold,
+														fontFamily: 'Epilogue',
+													),
+												),
+											],
+										),
+										const SizedBox(height: 6),
+										Text(
+											tip,
+											style: const TextStyle(
+												color: Colors.white,
+												fontSize: 13,
+												height: 1.3,
+												fontFamily: 'Manrope',
+											),
+										),
+									],
+								),
+								loading: () => const SizedBox(
+									height: 80,
+									child: Center(
+										child: CircularProgressIndicator(color: Colors.white),
+									),
+								),
+								error: (_, __) => const Column(
+									crossAxisAlignment: CrossAxisAlignment.start,
+									mainAxisSize: MainAxisSize.min,
+									children: [
+										Row(
+											children: [
+												Icon(
+													LucideIcons.sparkles,
+													color: Colors.white,
+													size: 20,
+												),
+												SizedBox(width: 8),
+												Text(
+													'Spiritual Tip',
+													style: TextStyle(
+														color: Colors.white,
+														fontSize: 16,
+														fontWeight: FontWeight.bold,
+														fontFamily: 'Epilogue',
+													),
+												),
+											],
+										),
+										SizedBox(height: 6),
+										Text(
+											'Practice gratitude and keep your routine steady this month.',
+											style: TextStyle(
+												color: Colors.white,
+												fontSize: 13,
+												height: 1.3,
+												fontFamily: 'Manrope',
+											),
+										),
+									],
 								),
 							),
 						),
-					),
-					Positioned(
-						left: 16,
-						right: 16,
-						bottom: 16,
-						child: Column(
-							crossAxisAlignment: CrossAxisAlignment.start,
-							children: [
-								Text(
-									title,
-									style: AppThemes.headlineSm.copyWith(color: Colors.white),
-								),
-								const SizedBox(height: 4),
-								Text(
-									subtitle,
-									style: AppThemes.bodySm.copyWith(color: Colors.white70),
-								),
-							],
-						),
-					),
-				],
+					],
+				),
 			),
 		);
 	}
@@ -593,29 +679,30 @@ class _ErrorState extends StatelessWidget {
 
 	@override
 	Widget build(BuildContext context) {
+		final c = AppColorsOf(context);
 		return Center(
 			child: Padding(
 				padding: const EdgeInsets.all(24),
 				child: Column(
 					mainAxisSize: MainAxisSize.min,
 					children: [
-						const Icon(LucideIcons.alertTriangle, color: AppColors.error, size: 32),
+						Icon(LucideIcons.alertTriangle, color: c.error, size: 32),
 						const SizedBox(height: 12),
 						Text(
 							'Unable to load Panchang data',
-							style: AppThemes.headlineSm.copyWith(fontSize: 16),
+							style: AppThemes.headlineSm.copyWith(fontSize: 16, color: c.onSurface),
 						),
 						const SizedBox(height: 6),
 						Text(
 							message,
 							textAlign: TextAlign.center,
-							style: AppThemes.bodySm,
+							style: AppThemes.bodySm.copyWith(color: c.onSurfaceVariant),
 						),
 						const SizedBox(height: 12),
 						ElevatedButton(
 							onPressed: onRetry,
 							style: ElevatedButton.styleFrom(
-								backgroundColor: AppColors.primaryContainer,
+								backgroundColor: c.primaryContainer,
 								foregroundColor: Colors.white,
 							),
 							child: Text(

@@ -16,17 +16,17 @@ class FestivalsView extends ConsumerWidget {
     final screenWidth = MediaQuery.of(context).size.width;
     final isDesktop = screenWidth > 768;
     final isCompactHeader = screenWidth < 560;
+    final c = AppColorsOf(context);
 
     final calendar = ref.watch(festivalsCalendarProvider);
-    final spiritualTip = ref.watch(spiritualTipProvider);
 
     return calendar.when(
       data: (vm) => SingleChildScrollView(
-        padding: const EdgeInsets.only(
+        padding: EdgeInsets.only(
           left: 16.0,
           right: 16.0,
           top: 24.0,
-          bottom: 120.0,
+          bottom: MediaQuery.of(context).viewPadding.bottom + 20,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -40,7 +40,7 @@ class FestivalsView extends ConsumerWidget {
                   maxLines: 2,
                   softWrap: true,
                   style: AppThemes.labelMd.copyWith(
-                    color: AppColors.primaryContainer,
+                    color: c.primaryContainer,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 1.5,
                   ),
@@ -50,16 +50,15 @@ class FestivalsView extends ConsumerWidget {
                   child: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.03),
+                      color: c.subtleBg,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: AppColors.outlineVariant.withOpacity(0.3),
-                      ),
+                      border: Border.all(color: c.border),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         _buildSelectorStepper(
+                          context,
                           value: _monthName(vm.month),
                           onPrevious: () {
                             ref
@@ -74,6 +73,7 @@ class FestivalsView extends ConsumerWidget {
                         ),
                         const SizedBox(width: 8),
                         _buildSelectorStepper(
+                          context,
                           value: vm.year.toString(),
                           onPrevious: () {
                             ref
@@ -107,8 +107,8 @@ class FestivalsView extends ConsumerWidget {
                   Expanded(
                     flex: 5,
                     child: _buildSideEventsBarBlock(
+                      context,
                       _featuredEvents(vm.events),
-                      spiritualTip,
                     ),
                   ),
                 ],
@@ -119,8 +119,8 @@ class FestivalsView extends ConsumerWidget {
                   _buildGridCalendarBlock(context, screenWidth, vm),
                   const SizedBox(height: 20),
                   _buildSideEventsBarBlock(
+                    context,
                     _featuredEvents(vm.events),
-                    spiritualTip,
                   ),
                 ],
               ),
@@ -130,7 +130,7 @@ class FestivalsView extends ConsumerWidget {
             Text(
               'Full Calendar View',
               style: AppThemes.headlineMd.copyWith(
-                color: AppColors.onSurface,
+                color: c.onSurface,
                 fontSize: 20,
               ),
             ),
@@ -139,7 +139,7 @@ class FestivalsView extends ConsumerWidget {
               Text(
                 'No festivals listed for this month.',
                 style: AppThemes.bodyMd.copyWith(
-                  color: AppColors.onSurfaceVariant,
+                  color: c.onSurfaceVariant,
                 ),
               )
             else
@@ -150,19 +150,20 @@ class FestivalsView extends ConsumerWidget {
                 itemBuilder: (context, index) {
                   final event = vm.events[index];
                   return _buildResponsiveCalendarRow(
+                    context,
                     _formatEventDate(event.date),
                     event.weekday,
                     event.name,
                     _eventTypeLabel(event.type),
-                    AppColors.primaryContainer,
+                    c.primaryContainer,
                   );
                 },
               ),
           ],
         ),
       ),
-      loading: () => const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
+      loading: () => Center(
+        child: CircularProgressIndicator(color: c.primary),
       ),
       error: (error, stackTrace) => Center(
         child: Column(
@@ -171,7 +172,7 @@ class FestivalsView extends ConsumerWidget {
             Text(
               'Unable to load festivals.',
               style: AppThemes.bodyMd.copyWith(
-                color: AppColors.onSurfaceVariant,
+                color: c.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: 12),
@@ -189,28 +190,28 @@ class FestivalsView extends ConsumerWidget {
   // SUB-LAYOUT MODULAR BUILDERS
   // =========================================================================
 
-  Widget _buildSelectorStepper({
+  Widget _buildSelectorStepper(
+    BuildContext context, {
     required String value,
     required VoidCallback onPrevious,
     required VoidCallback onNext,
   }) {
+    final c = AppColorsOf(context);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 4),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.65),
+            color: c.card.withOpacity(0.65),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: AppColors.outlineVariant.withOpacity(0.2),
-            ),
+            border: Border.all(color: c.border),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
-                icon: const Icon(LucideIcons.chevronLeft, size: 16),
+                icon: Icon(LucideIcons.chevronLeft, size: 16, color: c.onSurface),
                 onPressed: onPrevious,
                 constraints: const BoxConstraints(),
                 padding: const EdgeInsets.all(4),
@@ -219,15 +220,16 @@ class FestivalsView extends ConsumerWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 8.0),
                 child: Text(
                   value,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                     fontFamily: 'Manrope',
+                    color: c.onSurface,
                   ),
                 ),
               ),
               IconButton(
-                icon: const Icon(LucideIcons.chevronRight, size: 16),
+                icon: Icon(LucideIcons.chevronRight, size: 16, color: c.onSurface),
                 onPressed: onNext,
                 constraints: const BoxConstraints(),
                 padding: const EdgeInsets.all(4),
@@ -244,6 +246,7 @@ class FestivalsView extends ConsumerWidget {
     double screenWidth,
     FestivalsCalendarVm vm,
   ) {
+    final c = AppColorsOf(context);
     final startWeekday = DateTime(vm.year, vm.month, 1).weekday;
     final leadingEmpty = startWeekday % 7;
     final totalDays = vm.days.length;
@@ -252,7 +255,7 @@ class FestivalsView extends ConsumerWidget {
 
     final cells = <Widget>[];
     for (var i = 0; i < leadingEmpty; i++) {
-      cells.add(_buildEmptyDayCell());
+      cells.add(_buildEmptyDayCell(context));
     }
     for (final day in vm.days) {
       cells.add(
@@ -265,17 +268,17 @@ class FestivalsView extends ConsumerWidget {
       );
     }
     for (var i = 0; i < trailingEmpty; i++) {
-      cells.add(_buildEmptyDayCell());
+      cells.add(_buildEmptyDayCell(context));
     }
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: c.card,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.outlineVariant.withOpacity(0.3)),
+        border: Border.all(color: c.border),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withOpacity(0.04),
+            color: c.primary.withOpacity(0.04),
             blurRadius: 20,
             offset: const Offset(0, 4),
           ),
@@ -286,87 +289,22 @@ class FestivalsView extends ConsumerWidget {
           // Seven Days Column Header Titles Label row
           Container(
             padding: const EdgeInsets.symmetric(vertical: 10),
-            color: Colors.black.withOpacity(0.02),
+            color: c.subtleBg,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: const [
-                Expanded(
-                  child: Text(
-                    'SUN',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.onSurfaceVariant,
+              children: [
+                for (final day in ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'])
+                  Expanded(
+                    child: Text(
+                      day,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: c.onSurfaceVariant,
+                      ),
                     ),
                   ),
-                ),
-                Expanded(
-                  child: Text(
-                    'MON',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    'TUE',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    'WED',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    'THU',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    'FRI',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    'SAT',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.onSurfaceVariant,
-                    ),
-                  ),
-                ),
               ],
             ),
           ),
@@ -385,11 +323,12 @@ class FestivalsView extends ConsumerWidget {
     );
   }
 
-  Widget _buildEmptyDayCell() {
+  Widget _buildEmptyDayCell(BuildContext context) {
+    final c = AppColorsOf(context);
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.01),
-        border: Border.all(color: AppColors.outlineVariant.withOpacity(0.1)),
+        color: c.isDark ? Colors.white.withOpacity(0.01) : Colors.black.withOpacity(0.01),
+        border: Border.all(color: c.outlineVariant.withOpacity(0.1)),
       ),
     );
   }
@@ -400,6 +339,7 @@ class FestivalsView extends ConsumerWidget {
     required DateTime date,
     List<FestivalCalendarEventDto> events = const [],
   }) {
+    final c = AppColorsOf(context);
     final tag = _buildEventTag(events);
     final isHighlighted = events.isNotEmpty;
     return InkWell(
@@ -411,9 +351,9 @@ class FestivalsView extends ConsumerWidget {
         padding: const EdgeInsets.all(2),
         decoration: BoxDecoration(
           color: isHighlighted
-              ? AppColors.primaryContainer.withOpacity(0.05)
+              ? c.primaryContainer.withOpacity(0.05)
               : Colors.transparent,
-          border: Border.all(color: AppColors.outlineVariant.withOpacity(0.1)),
+          border: Border.all(color: c.outlineVariant.withOpacity(0.1)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -424,8 +364,8 @@ class FestivalsView extends ConsumerWidget {
               style: TextStyle(
                 fontWeight: isHighlighted ? FontWeight.bold : FontWeight.normal,
                 color: isHighlighted
-                    ? AppColors.primaryContainer
-                    : AppColors.onSurface,
+                    ? c.primaryContainer
+                    : c.onSurface,
                 fontSize: 12,
               ),
             ),
@@ -438,8 +378,8 @@ class FestivalsView extends ConsumerWidget {
                     Container(
                       width: 4,
                       height: 4,
-                      decoration: const BoxDecoration(
-                        color: AppColors.primaryContainer,
+                      decoration: BoxDecoration(
+                        color: c.primaryContainer,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -450,10 +390,10 @@ class FestivalsView extends ConsumerWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 7.5,
                           fontWeight: FontWeight.bold,
-                          color: AppColors.primaryContainer,
+                          color: c.primaryContainer,
                         ),
                       ),
                     ),
@@ -473,6 +413,7 @@ class FestivalsView extends ConsumerWidget {
     DateTime date,
     List<FestivalCalendarEventDto> events,
   ) {
+    final c = AppColorsOf(context);
     showDialog<void>(
       context: context,
       builder: (dialogContext) {
@@ -488,7 +429,7 @@ class FestivalsView extends ConsumerWidget {
                 final event = events[index];
                 return Text(
                   event.name,
-                  style: AppThemes.bodyMd.copyWith(color: AppColors.onSurface),
+                  style: AppThemes.bodyMd.copyWith(color: c.onSurface),
                 );
               },
             ),
@@ -496,7 +437,7 @@ class FestivalsView extends ConsumerWidget {
           actions: [
             TextButton(
               style: TextButton.styleFrom(
-                foregroundColor: AppColors.primaryContainer,
+                foregroundColor: c.primaryContainer,
               ),
               onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('Close'),
@@ -588,23 +529,22 @@ class FestivalsView extends ConsumerWidget {
   }
 
   Widget _buildSideEventsBarBlock(
+    BuildContext context,
     List<FestivalCalendarEventVm> featuredEvents,
-    AsyncValue<String> spiritualTip,
   ) {
+    final c = AppColorsOf(context);
     return Column(
       children: [
         if (featuredEvents.isNotEmpty) ...[
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: c.card,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: AppColors.outlineVariant.withOpacity(0.3),
-              ),
+              border: Border.all(color: c.border),
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.primary.withOpacity(0.04),
+                  color: c.primary.withOpacity(0.04),
                   blurRadius: 20,
                   offset: const Offset(0, 4),
                 ),
@@ -615,16 +555,16 @@ class FestivalsView extends ConsumerWidget {
               children: [
                 Row(
                   children: [
-                    const Icon(
+                    Icon(
                       LucideIcons.star,
-                      color: AppColors.primaryContainer,
+                      color: c.primaryContainer,
                       size: 20,
                     ),
                     const SizedBox(width: 8),
                     Text(
                       'Featured Festivals',
                       style: AppThemes.headlineMd.copyWith(
-                        color: AppColors.onSurface,
+                        color: c.onSurface,
                         fontSize: 18,
                       ),
                     ),
@@ -633,6 +573,7 @@ class FestivalsView extends ConsumerWidget {
                 const SizedBox(height: 14),
                 for (var i = 0; i < featuredEvents.length; i++) ...[
                   _buildFeaturedFestivalItem(
+                    context,
                     _formatFeaturedDate(featuredEvents[i].date),
                     _eventTypeLabel(featuredEvents[i].type),
                     featuredEvents[i].name,
@@ -645,136 +586,25 @@ class FestivalsView extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
         ],
-
-        // Dynamic Card Graphic Module
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.primaryContainer.withOpacity(0.15),
-                blurRadius: 15,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: Image.network(
-                    'https://lh3.googleusercontent.com/aida-public/AB6AXuCFKZyD0LVQwZg86F_GVNdtk0xsue64DOzIzm9rJeYit6z3wd8F4_6khnlqcLl86D9rKDlNSpqs5n-wnW9dKfKC7yCQdoB5c4F23k3uHxrvnCAcn5Tkzxd17865_MDmeTbPvD8-UjWUoZEDxiu-YReq9thHypKbongmHvrdYB9e7rkKQBhf6_VVz3b5Eb6bx8aF4Aq4E3GALvIoDBXIL0WEYUulmNWqtXWFZfIQz6MF9rOQBPAU1gCmWJVOXZphhwISFXWVJ8EYoVs',
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                Positioned.fill(
-                  child: Container(
-                    color: AppColors.primaryContainer.withOpacity(0.75),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: spiritualTip.when(
-                    data: (tip) => Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(
-                              LucideIcons.sparkles,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                            SizedBox(width: 8),
-                            Text(
-                              'Spiritual Tip',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                fontFamily: 'Epilogue',
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          tip,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            height: 1.3,
-                            fontFamily: 'Manrope',
-                          ),
-                        ),
-                      ],
-                    ),
-                    loading: () => const SizedBox(
-                      height: 64,
-                      child: Center(
-                        child: CircularProgressIndicator(color: Colors.white),
-                      ),
-                    ),
-                    error: (_, __) => const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              LucideIcons.sparkles,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                            SizedBox(width: 8),
-                            Text(
-                              'Spiritual Tip',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                fontFamily: 'Epilogue',
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: 6),
-                        Text(
-                          'Practice gratitude and keep your routine steady this month.',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            height: 1.3,
-                            fontFamily: 'Manrope',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ],
     );
   }
 
   Widget _buildFeaturedFestivalItem(
+    BuildContext context,
     String date,
     String statusLabel,
     String title, [
     String description = '',
   ]) {
+    final c = AppColorsOf(context);
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: c.surface,
         borderRadius: BorderRadius.circular(8),
-        border: const Border(
-          left: BorderSide(color: AppColors.primaryContainer, width: 4),
+        border: Border(
+          left: BorderSide(color: c.primaryContainer, width: 4),
         ),
       ),
       child: Column(
@@ -785,25 +615,25 @@ class FestivalsView extends ConsumerWidget {
             children: [
               Text(
                 date,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.bold,
-                  color: AppColors.primaryContainer,
+                  color: c.primaryContainer,
                   fontFamily: 'Manrope',
                 ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryContainer.withOpacity(0.1),
+                  color: c.primaryContainer.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(100),
                 ),
                 child: Text(
                   statusLabel.toUpperCase(),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 9,
                     fontWeight: FontWeight.bold,
-                    color: AppColors.primaryContainer,
+                    color: c.primaryContainer,
                   ),
                 ),
               ),
@@ -812,10 +642,10 @@ class FestivalsView extends ConsumerWidget {
           const SizedBox(height: 6),
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.bold,
-              color: AppColors.onSurface,
+              color: c.onSurface,
               fontFamily: 'Manrope',
             ),
           ),
@@ -823,9 +653,9 @@ class FestivalsView extends ConsumerWidget {
             const SizedBox(height: 4),
             Text(
               description,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
-                color: AppColors.onSurfaceVariant,
+                color: c.onSurfaceVariant,
                 height: 1.4,
                 fontFamily: 'Manrope',
               ),
@@ -838,19 +668,21 @@ class FestivalsView extends ConsumerWidget {
 
   // Custom adaptive component built to look clean on compact viewport sizes
   Widget _buildResponsiveCalendarRow(
+    BuildContext context,
     String date,
     String paksha,
     String festival,
     String urgency,
     Color highlightColor,
   ) {
+    final c = AppColorsOf(context);
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: c.card,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.outlineVariant.withOpacity(0.2)),
+        border: Border.all(color: c.border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -862,17 +694,17 @@ class FestivalsView extends ConsumerWidget {
               children: [
                 Text(
                   date,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 14,
-                    color: AppColors.onSurface,
+                    color: c.onSurface,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   paksha,
-                  style: const TextStyle(
-                    color: AppColors.onSurfaceVariant,
+                  style: TextStyle(
+                    color: c.onSurfaceVariant,
                     fontSize: 11,
                   ),
                 ),
@@ -884,10 +716,10 @@ class FestivalsView extends ConsumerWidget {
             flex: 4,
             child: Text(
               festival,
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w600,
                 fontSize: 13,
-                color: AppColors.onSurface,
+                color: c.onSurface,
               ),
             ),
           ),

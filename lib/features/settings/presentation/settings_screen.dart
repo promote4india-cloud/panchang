@@ -9,6 +9,7 @@ import '../../../constants/app_colors.dart';
 import '../../../constants/app_themes.dart';
 import '../../../features/panchang/providers/panchang_providers.dart';
 import '../../../models/location_models.dart';
+import '../../../providers/app_providers.dart';
 import '../../../providers/user_location_provider.dart';
 
 class SettingsView extends ConsumerStatefulWidget {
@@ -30,14 +31,17 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     final isLocationBusy = locationState.isLoading;
     final manualLocationLabel =
         locationState.value?.label ?? UserConfig.locationLabel;
+    final selectedThemeMode = ref.watch(themeModeProvider);
+    final appearanceLabel = _appearanceLabel(selectedThemeMode);
+    final c = AppColorsOf(context);
 
     return SingleChildScrollView(
       // Clear bounds spacing allowance logic parameters for fixed bottom nav bar
-      padding: const EdgeInsets.only(
+      padding: EdgeInsets.only(
         left: 16.0,
         right: 16.0,
         top: 24.0,
-        bottom: 120.0,
+        bottom: MediaQuery.of(context).padding.bottom + 12,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -46,11 +50,11 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: c.card,
               borderRadius: BorderRadius.circular(12),
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.primaryContainer.withOpacity(0.08),
+                  color: c.primaryContainer.withOpacity(0.08),
                   blurRadius: 20,
                   offset: const Offset(0, 4),
                 ),
@@ -61,8 +65,8 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                 Container(
                   width: 64,
                   height: 64,
-                  decoration: const BoxDecoration(
-                    color: AppColors.primaryContainer,
+                  decoration: BoxDecoration(
+                    color: c.primaryContainer,
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(
@@ -79,23 +83,23 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                       Text(
                         UserConfig.name,
                         style: AppThemes.headlineSm.copyWith(
-                          color: AppColors.onSurface,
+                          color: c.onSurface,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         'Vedic Practitioner since 2018',
                         style: AppThemes.bodySm.copyWith(
-                          color: AppColors.onSurfaceVariant,
+                          color: c.onSurfaceVariant,
                         ),
                       ),
                     ],
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(
+                  icon: Icon(
                     LucideIcons.edit2,
-                    color: AppColors.primaryContainer,
+                    color: c.primaryContainer,
                     size: 18,
                   ),
                   onPressed: () {},
@@ -106,13 +110,14 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           const SizedBox(height: 24),
 
           // --- SECTION: LOCATION SETTINGS ---
-          _buildGroupHeader('Location'),
+          _buildGroupHeader(context, 'Location'),
           const SizedBox(height: 8),
           Container(
-            decoration: _groupContainerDecoration(),
+            decoration: _groupContainerDecoration(c),
             child: Column(
               children: [
                 _buildToggleRow(
+                  context,
                   icon: LucideIcons.locate,
                   title: 'Automatic Detection',
                   subtitle: 'Uses GPS for precise Muhurta',
@@ -123,6 +128,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                   showDivider: true,
                 ),
                 _buildNavigationRow(
+                  context,
                   icon: LucideIcons.map,
                   title: 'Manual Entry',
                   trailingText: _firstWord(manualLocationLabel),
@@ -134,13 +140,14 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           const SizedBox(height: 24),
 
           // --- SECTION: REMINDERS SETTINGS ---
-          _buildGroupHeader('Reminders'),
+          _buildGroupHeader(context, 'Reminders'),
           const SizedBox(height: 8),
           Container(
-            decoration: _groupContainerDecoration(),
+            decoration: _groupContainerDecoration(c),
             child: Column(
               children: [
                 _buildToggleRow(
+                  context,
                   icon: LucideIcons.bell,
                   title: 'Daily Rahu Kaal',
                   subtitle: 'Alert 15 mins before start',
@@ -150,7 +157,8 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                   showDivider: true,
                 ),
                 _buildToggleRow(
-                  icon: LucideIcons.calendar,
+                  context,
+                  icon: LucideIcons.bell,
                   title: 'Important Festivals',
                   subtitle: 'Notifications for major tithis',
                   value: _importantFestivalsReminder,
@@ -164,13 +172,14 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           const SizedBox(height: 24),
 
           // --- SECTION: PREFERENCES ---
-          _buildGroupHeader('Preferences'),
+          _buildGroupHeader(context, 'Preferences'),
           const SizedBox(height: 8),
           Container(
-            decoration: _groupContainerDecoration(),
+            decoration: _groupContainerDecoration(c),
             child: Column(
               children: [
                 _buildNavigationRow(
+                  context,
                   icon: LucideIcons.languages,
                   title: 'Language',
                   trailingText: 'English',
@@ -178,10 +187,11 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                   onTap: () {},
                 ),
                 _buildNavigationRow(
+                  context,
                   icon: LucideIcons.moon,
                   title: 'Appearance',
-                  trailingText: 'System Default',
-                  onTap: () {},
+                  trailingText: appearanceLabel,
+                  onTap: () => _showAppearanceDialog(),
                 ),
               ],
             ),
@@ -197,15 +207,15 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                 child: Text(
                   'Privacy Policy',
                   style: AppThemes.labelMd.copyWith(
-                    color: AppColors.primaryContainer,
+                    color: c.primaryContainer,
                   ),
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 12.0),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0),
                 child: Text(
                   '•',
-                  style: TextStyle(color: AppColors.outlineVariant),
+                  style: TextStyle(color: c.outlineVariant),
                 ),
               ),
               GestureDetector(
@@ -213,7 +223,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                 child: Text(
                   'Terms of Service',
                   style: AppThemes.labelMd.copyWith(
-                    color: AppColors.primaryContainer,
+                    color: c.primaryContainer,
                   ),
                 ),
               ),
@@ -224,7 +234,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
             'Vedic Panchang v2.4.1 — Alignment with the Cosmos',
             textAlign: TextAlign.center,
             style: AppThemes.bodySm.copyWith(
-              color: AppColors.onSurfaceVariant.withOpacity(0.6),
+              color: c.onSurfaceVariant.withOpacity(0.6),
               fontSize: 12,
             ),
           ),
@@ -237,13 +247,14 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
   // HELPER SUB-COMPONENT WIDGET BUILDERS
   // =========================================================================
 
-  Widget _buildGroupHeader(String title) {
+  Widget _buildGroupHeader(BuildContext context, String title) {
+    final c = AppColorsOf(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8.0), // Fixed here
       child: Text(
         title.toUpperCase(),
         style: AppThemes.labelLg.copyWith(
-          color: AppColors.primaryContainer,
+          color: c.primaryContainer,
           fontWeight: FontWeight.bold,
           letterSpacing: 1.5,
         ),
@@ -251,13 +262,13 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     );
   }
 
-  BoxDecoration _groupContainerDecoration() {
+  BoxDecoration _groupContainerDecoration(AppColorsOf c) {
     return BoxDecoration(
-      color: Colors.white,
+      color: c.card,
       borderRadius: BorderRadius.circular(12),
       boxShadow: [
         BoxShadow(
-          color: AppColors.primaryContainer.withOpacity(0.04),
+          color: c.primaryContainer.withOpacity(0.04),
           blurRadius: 20,
           offset: const Offset(0, 4),
         ),
@@ -265,7 +276,83 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     );
   }
 
-  Widget _buildToggleRow({
+  String _appearanceLabel(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.dark:
+        return 'Dark Mode';
+      case ThemeMode.light:
+        return 'Light Mode';
+      case ThemeMode.system:
+      default:
+        return 'System Default';
+    }
+  }
+
+  Future<void> _showAppearanceDialog() async {
+    final currentMode = ref.read(themeModeProvider);
+    ThemeMode selectedMode = currentMode;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Appearance'),
+              contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  RadioListTile<ThemeMode>(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Light Mode'),
+                    value: ThemeMode.light,
+                    groupValue: selectedMode,
+                    onChanged: (value) {
+                      if (value == null) return;
+                      ref.read(themeModeProvider.notifier).setThemeMode(value);
+                      Navigator.of(dialogContext).pop();
+                    },
+                  ),
+                  RadioListTile<ThemeMode>(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Dark Mode'),
+                    value: ThemeMode.dark,
+                    groupValue: selectedMode,
+                    onChanged: (value) {
+                      if (value == null) return;
+                      ref.read(themeModeProvider.notifier).setThemeMode(value);
+                      Navigator.of(dialogContext).pop();
+                    },
+                  ),
+                  RadioListTile<ThemeMode>(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('System Default'),
+                    value: ThemeMode.system,
+                    groupValue: selectedMode,
+                    onChanged: (value) {
+                      if (value == null) return;
+                      ref.read(themeModeProvider.notifier).setThemeMode(value);
+                      Navigator.of(dialogContext).pop();
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildToggleRow(
+    BuildContext context, {
     required IconData icon,
     required String title,
     required String subtitle,
@@ -273,13 +360,14 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     required ValueChanged<bool>? onChanged,
     bool showDivider = false,
   }) {
+    final c = AppColorsOf(context);
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
           child: Row(
             children: [
-              Icon(icon, color: AppColors.onSurfaceVariant, size: 22),
+              Icon(icon, color: c.onSurfaceVariant, size: 22),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
@@ -290,13 +378,14 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                       style: AppThemes.bodyLg.copyWith(
                         fontWeight: FontWeight.w500,
                         fontSize: 16,
+                        color: c.onSurface,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
                       style: AppThemes.bodySm.copyWith(
-                        color: AppColors.onSurfaceVariant,
+                        color: c.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -306,15 +395,15 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                 value: value,
                 onChanged: onChanged,
                 activeColor: Colors.white,
-                activeTrackColor: AppColors.primaryContainer,
-                inactiveTrackColor: AppColors.outlineVariant.withOpacity(0.4),
+                activeTrackColor: c.primaryContainer,
+                inactiveTrackColor: c.outlineVariant.withOpacity(0.4),
               ),
             ],
           ),
         ),
         if (showDivider)
           Divider(
-            color: AppColors.outlineVariant.withOpacity(0.3),
+            color: c.outlineVariant.withOpacity(0.3),
             height: 1,
             indent: 54,
           ),
@@ -322,13 +411,15 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     );
   }
 
-  Widget _buildNavigationRow({
+  Widget _buildNavigationRow(
+    BuildContext context, {
     required IconData icon,
     required String title,
     required String trailingText,
     required VoidCallback onTap,
     bool showDivider = false,
   }) {
+    final c = AppColorsOf(context);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
@@ -341,7 +432,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
             ),
             child: Row(
               children: [
-                Icon(icon, color: AppColors.onSurfaceVariant, size: 22),
+                Icon(icon, color: c.onSurfaceVariant, size: 22),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Text(
@@ -349,20 +440,21 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                     style: AppThemes.bodyLg.copyWith(
                       fontWeight: FontWeight.w500,
                       fontSize: 16,
+                      color: c.onSurface,
                     ),
                   ),
                 ),
                 Text(
                   trailingText,
                   style: AppThemes.bodySm.copyWith(
-                    color: AppColors.onSurfaceVariant,
+                    color: c.onSurfaceVariant,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
                 const SizedBox(width: 6),
-                const Icon(
+                Icon(
                   LucideIcons.chevronRight,
-                  color: AppColors.outlineVariant,
+                  color: c.outlineVariant,
                   size: 18,
                 ),
               ],
@@ -370,7 +462,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           ),
           if (showDivider)
             Divider(
-              color: AppColors.outlineVariant.withOpacity(0.3),
+              color: c.outlineVariant.withOpacity(0.3),
               height: 1,
               indent: 54,
             ),
