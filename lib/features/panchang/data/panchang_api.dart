@@ -76,11 +76,13 @@ class PanchangApiClient {
     DashboardQuery query, {
     required int year,
     required int month,
+    bool includeContent = false,
   }) async {
     final params = {
       ...query.toQueryParams(),
       'year': year.toString(),
       'month': month.toString(),
+      if (includeContent) 'include_content': '1',
     };
     final json = await _getJson('/v1/festivals/calendar', params);
     return FestivalCalendarResponseDto.fromJson(json);
@@ -98,6 +100,27 @@ class PanchangApiClient {
     };
     final json = await _getJson('/v1/horoscope/$sign', params);
     return HoroscopeDailyDto.fromJson(json);
+  }
+
+  Future<FestivalDatesResponseDto> fetchFestivalDates(
+    String festivalId,
+    DashboardQuery query, {
+    required int year,
+    bool includeChildren = true,
+    String tradition = 'all',
+    String ayanamsa = 'lahiri',
+    String calendarTime = 'civil',
+  }) async {
+    final params = {
+      ...query.toQueryParams(),
+      'year': year.toString(),
+      'include_children': includeChildren ? 'true' : 'false',
+      'tradition': tradition,
+      'ayanamsa': ayanamsa,
+      'calendar_time': calendarTime,
+    };
+    final json = await _getJson('/v1/festivals/$festivalId/dates', params);
+    return FestivalDatesResponseDto.fromJson(json);
   }
 
   Future<List<LocationSearchResult>> searchLocations({

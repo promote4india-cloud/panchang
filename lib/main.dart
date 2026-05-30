@@ -121,17 +121,6 @@ class DashboardPage extends ConsumerWidget {
       ),
       body: Stack(
         children: [
-          // Background Mandala Effect Vector Image Wrap
-          Positioned.fill(
-            child: Opacity(
-              opacity: 0.03,
-              child: Image.network(
-                'https://lh3.googleusercontent.com/aida-public/AB6AXuCT3mdlgJrg8ueB6Xu0OVvkQ71-EvRttjGWMPpJv1HBfHcnpKFZh8HMvPrGC6yCajr2m7Wd0RQHxL5lw3fE5i2oDNvTQnUps9FPwKGbD8AwTrj0FNEtcKgJGM2BfqgDT-NPaVcAozBQh6zbv_ZUa8-wtTsKn30GtXYfg8M9_DkWwhk2XP0U-ws-lPSYcWDV6TrQ-CsIMBu7nalsa5IXjFeK0mX5tk_6Mw_kLqMw2-QUBPZ6n4MLsSvR9FouLPRH776fPF_kC6HNYMw',
-                fit: BoxFit.cover,
-              ),
-            ),
-          ),
-
           // Animated transition when switching tabs
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 300),

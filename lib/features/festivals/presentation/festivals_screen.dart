@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../constants/app_colors.dart';
 import '../../../constants/app_themes.dart';
 import '../../panchang/models/panchang_models.dart';
+import 'festival_detail_screen.dart';
 import '../providers/festivals_providers.dart';
 
 class FestivalsView extends ConsumerWidget {
@@ -109,6 +110,7 @@ class FestivalsView extends ConsumerWidget {
                     child: _buildSideEventsBarBlock(
                       context,
                       _featuredEvents(vm.events),
+                      vm.events,
                     ),
                   ),
                 ],
@@ -121,6 +123,7 @@ class FestivalsView extends ConsumerWidget {
                   _buildSideEventsBarBlock(
                     context,
                     _featuredEvents(vm.events),
+                    vm.events,
                   ),
                 ],
               ),
@@ -153,9 +156,10 @@ class FestivalsView extends ConsumerWidget {
                     context,
                     _formatEventDate(event.date),
                     event.weekday,
-                    event.name,
+                    _displayEventName(event),
                     _eventTypeLabel(event.type),
                     c.primaryContainer,
+                    onTap: () => _openFestivalDetail(context, vm.events, index),
                   );
                 },
               ),
@@ -264,6 +268,7 @@ class FestivalsView extends ConsumerWidget {
           day.day.toString(),
           date: DateTime(vm.year, vm.month, day.day),
           events: day.events,
+          allEvents: vm.events,
         ),
       );
     }
@@ -338,6 +343,7 @@ class FestivalsView extends ConsumerWidget {
     String day, {
     required DateTime date,
     List<FestivalCalendarEventDto> events = const [],
+    List<FestivalCalendarEventVm> allEvents = const [],
   }) {
     final c = AppColorsOf(context);
     final tag = _buildEventTag(events);
@@ -345,7 +351,7 @@ class FestivalsView extends ConsumerWidget {
     return InkWell(
       onTap: events.isEmpty
           ? null
-          : () => _showDayEventsDialog(context, date, events),
+          : () => _showDayEventsDialog(context, date, events, allEvents),
       borderRadius: BorderRadius.circular(4),
       child: Container(
         padding: const EdgeInsets.all(2),
@@ -412,6 +418,7 @@ class FestivalsView extends ConsumerWidget {
     BuildContext context,
     DateTime date,
     List<FestivalCalendarEventDto> events,
+    List<FestivalCalendarEventVm> allEvents,
   ) {
     final c = AppColorsOf(context);
     showDialog<void>(
@@ -427,9 +434,26 @@ class FestivalsView extends ConsumerWidget {
               separatorBuilder: (_, __) => const Divider(height: 12),
               itemBuilder: (context, index) {
                 final event = events[index];
-                return Text(
-                  event.name,
-                  style: AppThemes.bodyMd.copyWith(color: c.onSurface),
+                final displayName = _displayEventNameFromDto(event);
+                return InkWell(
+                  onTap: () {
+                    final targetIndex = _findEventIndex(
+                      allEvents,
+                      event,
+                      date,
+                    );
+                    Navigator.of(dialogContext).pop();
+                    if (targetIndex >= 0) {
+                      _openFestivalDetail(context, allEvents, targetIndex);
+                    }
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Text(
+                      displayName,
+                      style: AppThemes.bodyMd.copyWith(color: c.onSurface),
+                    ),
+                  ),
                 );
               },
             ),
@@ -450,8 +474,9 @@ class FestivalsView extends ConsumerWidget {
 
   String? _buildEventTag(List<FestivalCalendarEventDto> events) {
     if (events.isEmpty) return null;
-    if (events.length == 1) return events.first.name;
-    return '${events.first.name} +${events.length - 1}';
+    final firstName = _displayEventNameFromDto(events.first);
+    if (events.length == 1) return firstName;
+    return '$firstName +${events.length - 1}';
   }
 
   String _formatEventDate(DateTime date) {
@@ -466,6 +491,36 @@ class FestivalsView extends ConsumerWidget {
   String _eventTypeLabel(String? type) {
     if (type == null || type.trim().isEmpty) return 'FESTIVAL';
     return type.trim().toUpperCase();
+  }
+
+  String _displayEventName(FestivalCalendarEventVm event) {
+    final contentName = event.content?.name;
+    if (contentName != null && contentName.trim().isNotEmpty) {
+      return contentName.trim();
+    }
+    return _prettifyName(event.name);
+  }
+
+  String _displayEventNameFromDto(FestivalCalendarEventDto event) {
+    final contentName = event.content?.name;
+    if (contentName != null && contentName.trim().isNotEmpty) {
+      return contentName.trim();
+    }
+    return _prettifyName(event.name);
+  }
+
+  String _prettifyName(String raw) {
+    if (raw.trim().isEmpty) return raw;
+    final base = raw.split('.').last;
+    final words = base.replaceAll('-', ' ').split(RegExp(r'\s+'));
+    final cleaned = words.where((w) => w.trim().isNotEmpty).map(_titleCase);
+    return cleaned.join(' ');
+  }
+
+  String _titleCase(String word) {
+    if (word.isEmpty) return word;
+    final lower = word.toLowerCase();
+    return lower[0].toUpperCase() + lower.substring(1);
   }
 
   String _monthShort(int month) {
@@ -531,8 +586,34 @@ class FestivalsView extends ConsumerWidget {
   Widget _buildSideEventsBarBlock(
     BuildContext context,
     List<FestivalCalendarEventVm> featuredEvents,
+    List<FestivalCalendarEventVm> allEvents,
   ) {
     final c = AppColorsOf(context);
+    final items = <Widget>[];
+    for (var i = 0; i < featuredEvents.length; i++) {
+      final targetIndex = allEvents.indexWhere(
+        (item) => _sameDay(item.date, featuredEvents[i].date)
+            && item.id == featuredEvents[i].id,
+      );
+      items.add(
+        _buildFeaturedFestivalItem(
+          context,
+          _formatFeaturedDate(featuredEvents[i].date),
+          _eventTypeLabel(featuredEvents[i].type),
+          _displayEventName(featuredEvents[i]),
+          onTap: targetIndex < 0
+              ? null
+              : () => _openFestivalDetail(
+                    context,
+                    allEvents,
+                    targetIndex,
+                  ),
+        ),
+      );
+      if (i != featuredEvents.length - 1) {
+        items.add(const SizedBox(height: 12));
+      }
+    }
     return Column(
       children: [
         if (featuredEvents.isNotEmpty) ...[
@@ -571,16 +652,7 @@ class FestivalsView extends ConsumerWidget {
                   ],
                 ),
                 const SizedBox(height: 14),
-                for (var i = 0; i < featuredEvents.length; i++) ...[
-                  _buildFeaturedFestivalItem(
-                    context,
-                    _formatFeaturedDate(featuredEvents[i].date),
-                    _eventTypeLabel(featuredEvents[i].type),
-                    featuredEvents[i].name,
-                  ),
-                  if (i != featuredEvents.length - 1)
-                    const SizedBox(height: 12),
-                ],
+                ...items,
               ],
             ),
           ),
@@ -594,74 +666,79 @@ class FestivalsView extends ConsumerWidget {
     BuildContext context,
     String date,
     String statusLabel,
-    String title, [
+    String title, {
     String description = '',
-  ]) {
+    VoidCallback? onTap,
+  }) {
     final c = AppColorsOf(context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border(
-          left: BorderSide(color: c.primaryContainer, width: 4),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(8),
+          border: Border(
+            left: BorderSide(color: c.primaryContainer, width: 4),
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                date,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: c.primaryContainer,
-                  fontFamily: 'Manrope',
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: c.primaryContainer.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(100),
-                ),
-                child: Text(
-                  statusLabel.toUpperCase(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  date,
                   style: TextStyle(
-                    fontSize: 9,
+                    fontSize: 13,
                     fontWeight: FontWeight.bold,
                     color: c.primaryContainer,
+                    fontFamily: 'Manrope',
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-              color: c.onSurface,
-              fontFamily: 'Manrope',
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: c.primaryContainer.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(100),
+                  ),
+                  child: Text(
+                    statusLabel.toUpperCase(),
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      color: c.primaryContainer,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-          if (description.trim().isNotEmpty) ...[
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
-              description,
+              title,
               style: TextStyle(
-                fontSize: 12,
-                color: c.onSurfaceVariant,
-                height: 1.4,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: c.onSurface,
                 fontFamily: 'Manrope',
               ),
             ),
+            if (description.trim().isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: c.onSurfaceVariant,
+                  height: 1.4,
+                  fontFamily: 'Manrope',
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -674,74 +751,115 @@ class FestivalsView extends ConsumerWidget {
     String festival,
     String urgency,
     Color highlightColor,
+    {VoidCallback? onTap}
   ) {
     final c = AppColorsOf(context);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.card,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: c.border),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  date,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                    color: c.onSurface,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: c.border),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              flex: 3,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    date,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: c.onSurface,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  paksha,
-                  style: TextStyle(
-                    color: c.onSurfaceVariant,
-                    fontSize: 11,
+                  const SizedBox(height: 2),
+                  Text(
+                    paksha,
+                    style: TextStyle(
+                      color: c.onSurfaceVariant,
+                      fontSize: 11,
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            flex: 4,
-            child: Text(
-              festival,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-                color: c.onSurface,
+                ],
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: highlightColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(100),
-            ),
-            child: Text(
-              urgency,
-              style: TextStyle(
-                color: highlightColor,
-                fontSize: 9,
-                fontWeight: FontWeight.bold,
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 4,
+              child: Text(
+                festival,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  color: c.onSurface,
+                ),
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: highlightColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(100),
+              ),
+              child: Text(
+                urgency,
+                style: TextStyle(
+                  color: highlightColor,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  void _openFestivalDetail(
+    BuildContext context,
+    List<FestivalCalendarEventVm> events,
+    int initialIndex,
+  ) {
+    if (events.isEmpty || initialIndex < 0 || initialIndex >= events.length) {
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FestivalDetailScreen(
+          events: events,
+          initialIndex: initialIndex,
+        ),
+      ),
+    );
+  }
+
+  int _findEventIndex(
+    List<FestivalCalendarEventVm> allEvents,
+    FestivalCalendarEventDto event,
+    DateTime date,
+  ) {
+    for (var i = 0; i < allEvents.length; i++) {
+      final candidate = allEvents[i];
+      if (candidate.id == event.id && _sameDay(candidate.date, date)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  bool _sameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 }
 

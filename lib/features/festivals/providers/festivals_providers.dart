@@ -6,16 +6,24 @@ import '../../panchang/providers/panchang_providers.dart';
 import '../data/spiritual_tips.dart';
 
 class FestivalCalendarEventVm {
+  final String id;
   final DateTime date;
   final String weekday;
   final String name;
   final String? type;
+  final FestivalContentDto? content;
+  final List<String> rituals;
+  final List<FestivalFaqDto> faqs;
 
   FestivalCalendarEventVm({
+    required this.id,
     required this.date,
     required this.weekday,
     required this.name,
     required this.type,
+    required this.content,
+    required this.rituals,
+    required this.faqs,
   });
 }
 
@@ -54,6 +62,7 @@ final festivalsCalendarProvider = FutureProvider<FestivalsCalendarVm>((
       baseQuery,
       year: activeMonth.year,
       month: activeMonth.month,
+      includeContent: true,
     ),
   ]);
 
@@ -78,10 +87,14 @@ final festivalsCalendarProvider = FutureProvider<FestivalsCalendarVm>((
     for (final event in day.events) {
       events.add(
         FestivalCalendarEventVm(
+          id: event.id,
           date: DateTime(calendar.year, calendar.month, day.day),
           weekday: day.weekday,
           name: event.name,
           type: event.type,
+          content: event.content,
+          rituals: event.rituals,
+          faqs: event.faqs,
         ),
       );
     }

@@ -325,6 +325,9 @@ class _MuhuratScroller extends StatelessWidget {
 		final bgColor = isPositive
 				? (c.isDark ? const Color(0xFF1A2E1A) : Colors.green[50] ?? AppColors.primaryContainer.withOpacity(0.08))
 				: (c.isDark ? const Color(0xFF2E1A1A) : AppColors.errorContainerBg);
+		final edgeShadow = c.isDark
+				? Colors.white.withOpacity(0.28)
+				: Colors.black.withOpacity(0.32);
 
 		return Column(
 			crossAxisAlignment: CrossAxisAlignment.start,
@@ -336,44 +339,82 @@ class _MuhuratScroller extends StatelessWidget {
 				const SizedBox(height: 8),
 				SizedBox(
 					height: 88,
-					child: ListView.separated(
-						scrollDirection: Axis.horizontal,
-						itemCount: items.length,
-						separatorBuilder: (_, __) => const SizedBox(width: 10),
-						itemBuilder: (context, index) {
-							final item = items[index];
-							return Container(
-								width: 170,
-								padding: const EdgeInsets.all(12),
-								decoration: BoxDecoration(
-									color: bgColor,
-									borderRadius: BorderRadius.circular(12),
-								),
-								child: Column(
-									crossAxisAlignment: CrossAxisAlignment.start,
-									mainAxisAlignment: MainAxisAlignment.spaceBetween,
-									children: [
-										Text(
-											item.name,
-											maxLines: 1,
-											overflow: TextOverflow.ellipsis,
-											style: AppThemes.labelMd.copyWith(
-                        fontWeight: FontWeight.w800,
-												fontSize: 14,
-												color: c.onSurfaceVariant,
+					child: Stack(
+						children: [
+							ListView.separated(
+								scrollDirection: Axis.horizontal,
+								itemCount: items.length,
+								separatorBuilder: (_, __) => const SizedBox(width: 10),
+								itemBuilder: (context, index) {
+									final item = items[index];
+									return Container(
+										width: 170,
+										padding: const EdgeInsets.all(12),
+										decoration: BoxDecoration(
+											color: bgColor,
+											borderRadius: BorderRadius.circular(12),
+										),
+										child: Column(
+											crossAxisAlignment: CrossAxisAlignment.start,
+											mainAxisAlignment: MainAxisAlignment.spaceBetween,
+											children: [
+												Text(
+													item.name,
+													maxLines: 1,
+													overflow: TextOverflow.ellipsis,
+													style: AppThemes.labelMd.copyWith(
+														fontWeight: FontWeight.w800,
+														fontSize: 14,
+														color: c.onSurfaceVariant,
+													),
+												),
+												Text(
+													item.timeRange,
+													style: AppThemes.bodySm.copyWith(
+														fontWeight: FontWeight.w400,
+														color: c.onSurface,
+													),
+												),
+											],
+										),
+									);
+								},
+							),
+							Positioned(
+								right: 0,
+								top: 0,
+								bottom: 0,
+								child: IgnorePointer(
+									child: Container(
+										width: 18,
+										decoration: BoxDecoration(
+											gradient: LinearGradient(
+												begin: Alignment.centerRight,
+												end: Alignment.centerLeft,
+												colors: [
+													edgeShadow,
+													edgeShadow.withOpacity(0.0),
+												],
 											),
 										),
-										Text(
-											item.timeRange,
-											style: AppThemes.bodySm.copyWith(
-                        fontWeight: FontWeight.w400,
-												color: c.onSurface,
-											),
-										),
-									],
+									),
 								),
-							);
-						},
+							),
+							Positioned(
+								right: 2,
+								top: 0,
+								bottom: 0,
+								child: IgnorePointer(
+									child: Center(
+										child: Icon(
+											Icons.chevron_right,
+											color: edgeShadow.withOpacity(0.85),
+											size: 16,
+										),
+									),
+								),
+							),
+						],
 					),
 				),
 			],

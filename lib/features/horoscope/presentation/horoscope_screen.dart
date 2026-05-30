@@ -304,14 +304,11 @@ Widget _buildPredictionCard(
               ],
             ),
             const SizedBox(height: 20),
-            Text(
-              '"$prediction"',
-              style: TextStyle(
-                fontSize: 18,
-                fontStyle: FontStyle.italic,
-                color: c.onSurface,
-                height: 1.5,
+            _ExpandablePredictionText(
+              key: ValueKey(
+                '${state.selectedZodiac}-${state.activeDuration}-$dateLabel',
               ),
+              text: '"$prediction"',
             ),
             if (showRatings) ...[
               const SizedBox(height: 16),
@@ -419,11 +416,10 @@ List<Widget> _buildCategoryRows(BuildContext context, Map<String, dynamic>? cate
   if (categories == null) return const [];
   final rows = <Widget>[];
   void addRow(IconData icon, String label, String key) {
-    rows.add(_buildCategoryPredictionRow(
-      context,
-      icon,
-      label,
-      _categoryText(categories, key),
+    rows.add(_CategoryPredictionCard(
+      icon: icon,
+      title: label,
+      body: _categoryText(categories, key),
     ));
     rows.add(const SizedBox(height: 12));
   }
@@ -440,42 +436,104 @@ List<Widget> _buildCategoryRows(BuildContext context, Map<String, dynamic>? cate
   return rows;
 }
 
-Widget _buildCategoryPredictionRow(BuildContext context, IconData icon, String title, String body) {
-  final c = AppColorsOf(context);
-  return Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: c.subtleBg,
+class _CategoryPredictionCard extends StatefulWidget {
+  final IconData icon;
+  final String title;
+  final String body;
+
+  const _CategoryPredictionCard({
+    required this.icon,
+    required this.title,
+    required this.body,
+  });
+
+  @override
+  State<_CategoryPredictionCard> createState() => _CategoryPredictionCardState();
+}
+
+class _CategoryPredictionCardState extends State<_CategoryPredictionCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColorsOf(context);
+    return InkWell(
+      onTap: () => setState(() => _expanded = !_expanded),
       borderRadius: BorderRadius.circular(16),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: c.subtleBg,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: c.primary, size: 18),
-            const SizedBox(width: 8),
+            Row(
+              children: [
+                Icon(widget.icon, color: c.primary, size: 18),
+                const SizedBox(width: 8),
+                Text(
+                  widget.title.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                    color: c.primary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
             Text(
-              title.toUpperCase(),
+              widget.body,
+              maxLines: _expanded ? null : 5,
+              overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
-                color: c.primary,
+                fontSize: 14,
+                color: c.onSurfaceVariant,
+                height: 1.4,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        Text(
-          body,
-          style: TextStyle(
-            fontSize: 14,
-            color: c.onSurfaceVariant,
-            height: 1.4,
-          ),
+      ),
+    );
+  }
+}
+
+class _ExpandablePredictionText extends StatefulWidget {
+  final String text;
+
+  const _ExpandablePredictionText({
+    super.key,
+    required this.text,
+  });
+
+  @override
+  State<_ExpandablePredictionText> createState() => _ExpandablePredictionTextState();
+}
+
+class _ExpandablePredictionTextState extends State<_ExpandablePredictionText> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColorsOf(context);
+    return InkWell(
+      onTap: () => setState(() => _expanded = !_expanded),
+      borderRadius: BorderRadius.circular(12),
+      child: Text(
+        widget.text,
+        maxLines: _expanded ? null : 5,
+        overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 18,
+          fontStyle: FontStyle.italic,
+          color: c.onSurface,
+          height: 1.5,
         ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }
