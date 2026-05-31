@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../config/app_config.dart';
 import '../../../config/user_config.dart';
+import '../../../assset/zodiac_icons.dart';
+import '../../../providers/user_location_provider.dart';
 import '../data/panchang_api.dart';
 import '../models/panchang_models.dart';
 
@@ -10,17 +12,20 @@ final panchangApiProvider = Provider<PanchangApiClient>((ref) {
 });
 
 final dashboardQueryProvider = Provider<DashboardQuery>((ref) {
+  final location = ref.watch(userLocationProvider).value;
   return DashboardQuery(
-    lat: UserConfig.latitude,
-    lon: UserConfig.longitude,
-    tz: UserConfig.timezone,
+    lat: location?.latitude ?? UserConfig.latitude,
+    lon: location?.longitude ?? UserConfig.longitude,
+    tz: location?.timezone ?? UserConfig.timezone,
     language: UserConfig.language,
   );
 });
 
-final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((ref) async {
+final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((
+  ref,
+) async {
   final api = ref.read(panchangApiProvider);
-  final query = ref.read(dashboardQueryProvider);
+  final query = ref.watch(dashboardQueryProvider);
 
   final results = await Future.wait([
     api.fetchPanchangToday(query),
@@ -43,31 +48,34 @@ final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((ref) asyn
       .where((item) => !_isIslamicType(item.type))
       .toList();
 
-    final auspiciousList = muhurat.muhurats
+  final auspiciousList = muhurat.muhurats
       .where((item) => _isAuspiciousCategory(item.category))
-      .map((item) => PanchangMuhuratVm(
-            name: item.name,
-            timeRange: _formatRange(item.start, item.end),
-          ))
+      .map(
+        (item) => PanchangMuhuratVm(
+          name: item.name,
+          timeRange: _formatRange(item.start, item.end),
+        ),
+      )
       .toList();
-    final inauspiciousList = muhurat.muhurats
+  final inauspiciousList = muhurat.muhurats
       .where((item) => _isInauspiciousCategory(item.category))
-      .map((item) => PanchangMuhuratVm(
-            name: item.name,
-            timeRange: _formatRange(item.start, item.end),
-          ))
+      .map(
+        (item) => PanchangMuhuratVm(
+          name: item.name,
+          timeRange: _formatRange(item.start, item.end),
+        ),
+      )
       .toList();
 
-  final festivalTitle = visibleToday.isNotEmpty
-      ? visibleToday.first.name
-      : '';
-      // : 'No festival today';
+  final festivalTitle = visibleToday.isNotEmpty ? visibleToday.first.name : '';
+  // : 'No festival today';
 
   final upcomingItem = _firstOrNull(visibleUpcoming);
 
   return PanchangDashboardVm(
     dateLabel: _formatDateLabel(panchang.date, panchang.weekday),
-    lunarLabel: '${panchang.masa.name} ${panchang.tithi.paksha} ${panchang.tithi.name}',
+    lunarLabel:
+        '${panchang.masa.name} ${panchang.tithi.paksha} ${panchang.tithi.name}',
     festivalTitle: festivalTitle,
     tithiLabel: panchang.tithi.name,
     nakshatraLabel: panchang.nakshatra.name,
@@ -75,15 +83,15 @@ final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((ref) asyn
     sunsetLabel: _formatTime(panchang.sunMoon.sunsetLocal),
     auspiciousMuhurats: auspiciousList,
     inauspiciousMuhurats: inauspiciousList,
-    rashifalSign: _formatZodiacLabel(horoscope.sign.isEmpty
-      ? UserConfig.zodiacSign
-      : horoscope.sign),
+    rashifalSign: zodiacLabelFor(
+      horoscope.sign.isEmpty ? UserConfig.zodiacSign : horoscope.sign,
+    ),
     rashifalText: horoscope.prediction?.trim().isNotEmpty == true
-      ? horoscope.prediction!
-      : 'No horoscope available for today.',
-    rashifalSymbol: _zodiacSymbol(horoscope.sign.isEmpty
-        ? UserConfig.zodiacSign
-        : horoscope.sign),
+        ? horoscope.prediction!
+        : 'No horoscope available for today.',
+    rashifalSymbol: zodiacSymbolFor(
+      horoscope.sign.isEmpty ? UserConfig.zodiacSign : horoscope.sign,
+    ),
     upcomingDateLabel: upcomingItem == null
         ? '--'
         : _formatShortDate(upcomingItem.date, upcomingItem.weekday),
@@ -107,43 +115,6 @@ bool _isAuspiciousCategory(String? value) {
 bool _isInauspiciousCategory(String? value) {
   if (value == null || value.isEmpty) return false;
   return value.toLowerCase() == 'inauspicious';
-}
-
-String _formatZodiacLabel(String value) {
-  if (value.isEmpty) return '';
-  final normalized = value.toLowerCase();
-  return normalized[0].toUpperCase() + normalized.substring(1);
-}
-
-String _zodiacSymbol(String value) {
-  switch (value.toLowerCase()) {
-    case 'aries':
-      return '♈';
-    case 'taurus':
-      return '♉';
-    case 'gemini':
-      return '♊';
-    case 'cancer':
-      return '♋';
-    case 'leo':
-      return '♌';
-    case 'virgo':
-      return '♍';
-    case 'libra':
-      return '♎';
-    case 'scorpio':
-      return '♏';
-    case 'sagittarius':
-      return '♐';
-    case 'capricorn':
-      return '♑';
-    case 'aquarius':
-      return '♒';
-    case 'pisces':
-      return '♓';
-    default:
-      return '';
-  }
 }
 
 String _formatRange(String? start, String? end) {

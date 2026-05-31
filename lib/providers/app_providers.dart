@@ -55,3 +55,19 @@ class TopBarNotifier extends Notifier<TopBarState> {
 final topBarProvider = NotifierProvider<TopBarNotifier, TopBarState>(() {
   return TopBarNotifier();
 });
+
+// =========================================================================
+// APP THEME MODE STATE MANAGER
+// =========================================================================
+class ThemeModeNotifier extends Notifier<ThemeMode> {
+  @override
+  ThemeMode build() => ThemeMode.system;
+
+  void setThemeMode(ThemeMode mode) {
+    state = mode;
+  }
+}
+
+final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(() {
+  return ThemeModeNotifier();
+});

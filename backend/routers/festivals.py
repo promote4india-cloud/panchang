@@ -290,6 +290,85 @@ def _filter_tradition(occ, tradition: str):
     ]
 
 
+def _content_payload(row) -> dict:
+    data = dict(row)
+    data.pop("festival_id", None)
+    data.pop("language", None)
+    return data
+
+
+def _fetch_festival_content(conn, festival_ids: list[str], language: str) -> dict[str, dict]:
+    if not festival_ids:
+        return {}
+    placeholders = ",".join(["?"] * len(festival_ids))
+    rows = conn.execute(
+        f"""
+        SELECT * FROM festival_content
+         WHERE festival_id IN ({placeholders})
+           AND language = ?
+        """,
+        (*festival_ids, language),
+    ).fetchall()
+    content = {r["festival_id"]: _content_payload(r) for r in rows}
+    if language != "en":
+        missing = [fid for fid in festival_ids if fid not in content]
+        if missing:
+            placeholders = ",".join(["?"] * len(missing))
+            rows = conn.execute(
+                f"""
+                SELECT * FROM festival_content
+                 WHERE festival_id IN ({placeholders})
+                   AND language = 'en'
+                """,
+                (*missing,),
+            ).fetchall()
+            for r in rows:
+                content.setdefault(r["festival_id"], _content_payload(r))
+    return content
+
+
+def _fetch_festival_rituals(conn, festival_ids: list[str], language: str) -> dict[str, list[str]]:
+    if not festival_ids:
+        return {}
+    placeholders = ",".join(["?"] * len(festival_ids))
+    rows = conn.execute(
+        f"""
+        SELECT festival_id, text
+          FROM festival_rituals
+         WHERE festival_id IN ({placeholders})
+           AND language = ?
+         ORDER BY festival_id, position
+        """,
+        (*festival_ids, language),
+    ).fetchall()
+    rituals: dict[str, list[str]] = {}
+    for row in rows:
+        rituals.setdefault(row["festival_id"], []).append(row["text"])
+    return rituals
+
+
+def _fetch_festival_faqs(conn, festival_ids: list[str], language: str) -> dict[str, list[dict]]:
+    if not festival_ids:
+        return {}
+    placeholders = ",".join(["?"] * len(festival_ids))
+    rows = conn.execute(
+        f"""
+        SELECT festival_id, question, answer
+          FROM festival_faqs
+         WHERE festival_id IN ({placeholders})
+           AND language = ?
+         ORDER BY festival_id, position
+        """,
+        (*festival_ids, language),
+    ).fetchall()
+    faqs: dict[str, list[dict]] = {}
+    for row in rows:
+        faqs.setdefault(row["festival_id"], []).append(
+            {"question": row["question"], "answer": row["answer"]}
+        )
+    return faqs
+
+
 @router.get("")
 def list_festivals(
     response: Response,
@@ -408,6 +487,10 @@ def calendar(
     month: int = Query(..., ge=1, le=12),
     tradition: str = TraditionQ,
     language: str = LangQ,
+    include_content: bool = Query(
+        False,
+        description="Include editorial content, rituals, and FAQs for each festival.",
+    ),
     lat: float = LatQ,
     lon: float = LonQ,
     tz: str = TzQ,
@@ -420,16 +503,35 @@ def calendar(
     end = Date(year, month, last)
     occ = festivals_in_range(start, end, language=language, lat=lat, lon=lon, tz=tz, ayanamsa=ayanamsa, calendar_time=calendar_time)
     occ = _filter_tradition(occ, tradition)
+    content_map: dict[str, dict] = {}
+    rituals_map: dict[str, list[str]] = {}
+    faqs_map: dict[str, list[dict]] = {}
+    if include_content and occ:
+        festival_ids = sorted({o.festival_id for o in occ})
+        conn = connect_ro()
+        try:
+            content_map = _fetch_festival_content(conn, festival_ids, language)
+            rituals_map = _fetch_festival_rituals(conn, festival_ids, language)
+            faqs_map = _fetch_festival_faqs(conn, festival_ids, language)
+        finally:
+            conn.close()
     by_day: dict[int, list[dict]] = {}
     for o in occ:
-        by_day.setdefault(o.date.day, []).append(
-            {"id": o.festival_id, "name": o.name, "type": o.type,
-             "traditions": list(o.traditions),
-             "scope_traditions": list(o.scope_traditions),
-             "adhik_status": o.adhik_status,
-             "puja_muhurats": [m.to_dict() for m in o.puja_muhurats],
-             "primary": o.primary}
-        )
+        item = {
+            "id": o.festival_id,
+            "name": o.name,
+            "type": o.type,
+            "traditions": list(o.traditions),
+            "scope_traditions": list(o.scope_traditions),
+            "adhik_status": o.adhik_status,
+            "puja_muhurats": [m.to_dict() for m in o.puja_muhurats],
+            "primary": o.primary,
+        }
+        if include_content:
+            item["content"] = content_map.get(o.festival_id)
+            item["rituals"] = rituals_map.get(o.festival_id, [])
+            item["faqs"] = faqs_map.get(o.festival_id, [])
+        by_day.setdefault(o.date.day, []).append(item)
     return {
         "year": year, "month": month,
         "days": [

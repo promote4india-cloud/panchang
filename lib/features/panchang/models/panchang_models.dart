@@ -5,6 +5,7 @@ class PanchangTodayDto {
   final NakshatraDto nakshatra;
   final MasaDto masa;
   final SunMoonDto sunMoon;
+  final HinduMonthYearDto hinduMonthAndYear;
 
   PanchangTodayDto({
     required this.date,
@@ -13,6 +14,7 @@ class PanchangTodayDto {
     required this.nakshatra,
     required this.masa,
     required this.sunMoon,
+    required this.hinduMonthAndYear,
   });
 
   factory PanchangTodayDto.fromJson(Map<String, dynamic> json) {
@@ -23,6 +25,26 @@ class PanchangTodayDto {
       nakshatra: NakshatraDto.fromJson(json['nakshatra'] as Map<String, dynamic>),
       masa: MasaDto.fromJson(json['masa'] as Map<String, dynamic>),
       sunMoon: SunMoonDto.fromJson(json['sun_moon'] as Map<String, dynamic>),
+      hinduMonthAndYear: HinduMonthYearDto.fromJson(
+        json['hindu_month_and_year'] as Map<String, dynamic>,
+      ),
+    );
+  }
+}
+
+class HinduMonthYearDto {
+  final String monthPurnimanta;
+  final String monthAmanta;
+
+  HinduMonthYearDto({
+    required this.monthPurnimanta,
+    required this.monthAmanta,
+  });
+
+  factory HinduMonthYearDto.fromJson(Map<String, dynamic> json) {
+    return HinduMonthYearDto(
+      monthPurnimanta: json['month_purnimanta'] as String? ?? '',
+      monthAmanta: json['month_amanta'] as String? ?? '',
     );
   }
 }
@@ -209,6 +231,271 @@ class FestivalsUpcomingResponseDto {
         .map((item) => UpcomingFestivalDto.fromJson(item as Map<String, dynamic>))
         .toList();
     return FestivalsUpcomingResponseDto(items: items);
+  }
+}
+
+class FestivalContentDto {
+  final String? name;
+  final String? subtitle;
+  final String? about;
+  final String? significance;
+  final String? history;
+  final String? scriptures;
+  final String? pujaVidhi;
+  final String? sourceUrl;
+  final String? scrapedAt;
+
+  FestivalContentDto({
+    required this.name,
+    required this.subtitle,
+    required this.about,
+    required this.significance,
+    required this.history,
+    required this.scriptures,
+    required this.pujaVidhi,
+    required this.sourceUrl,
+    required this.scrapedAt,
+  });
+
+  factory FestivalContentDto.fromJson(Map<String, dynamic> json) {
+    return FestivalContentDto(
+      name: json['name'] as String?,
+      subtitle: json['subtitle'] as String?,
+      about: json['about'] as String?,
+      significance: json['significance'] as String?,
+      history: json['history'] as String?,
+      scriptures: json['scriptures'] as String?,
+      pujaVidhi: json['puja_vidhi'] as String?,
+      sourceUrl: json['source_url'] as String?,
+      scrapedAt: json['scraped_at'] as String?,
+    );
+  }
+}
+
+class FestivalFaqDto {
+  final String question;
+  final String answer;
+
+  FestivalFaqDto({required this.question, required this.answer});
+
+  factory FestivalFaqDto.fromJson(Map<String, dynamic> json) {
+    return FestivalFaqDto(
+      question: json['question'] as String? ?? '',
+      answer: json['answer'] as String? ?? '',
+    );
+  }
+}
+
+class FestivalCalendarEventDto {
+  final String id;
+  final String name;
+  final String? type;
+  final bool? primary;
+  final FestivalContentDto? content;
+  final List<String> rituals;
+  final List<FestivalFaqDto> faqs;
+
+  FestivalCalendarEventDto({
+    required this.id,
+    required this.name,
+    required this.type,
+    required this.primary,
+    required this.content,
+    required this.rituals,
+    required this.faqs,
+  });
+
+  factory FestivalCalendarEventDto.fromJson(Map<String, dynamic> json) {
+    final contentJson = json['content'] as Map<String, dynamic>?;
+    final rituals = (json['rituals'] as List<dynamic>? ?? [])
+        .map((item) => item.toString())
+        .toList();
+    final faqs = (json['faqs'] as List<dynamic>? ?? [])
+        .map((item) => FestivalFaqDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+    return FestivalCalendarEventDto(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      type: json['type'] as String?,
+      primary: json['primary'] as bool?,
+      content: contentJson == null ? null : FestivalContentDto.fromJson(contentJson),
+      rituals: rituals,
+      faqs: faqs,
+    );
+  }
+}
+
+class FestivalCalendarDayDto {
+  final int day;
+  final String weekday;
+  final List<FestivalCalendarEventDto> events;
+
+  FestivalCalendarDayDto({
+    required this.day,
+    required this.weekday,
+    required this.events,
+  });
+
+  factory FestivalCalendarDayDto.fromJson(Map<String, dynamic> json) {
+    final events = (json['events'] as List<dynamic>? ?? [])
+        .map((item) => FestivalCalendarEventDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+    return FestivalCalendarDayDto(
+      day: json['day'] as int,
+      weekday: json['weekday'] as String,
+      events: events,
+    );
+  }
+}
+
+class FestivalCalendarResponseDto {
+  final int year;
+  final int month;
+  final List<FestivalCalendarDayDto> days;
+
+  FestivalCalendarResponseDto({
+    required this.year,
+    required this.month,
+    required this.days,
+  });
+
+  factory FestivalCalendarResponseDto.fromJson(Map<String, dynamic> json) {
+    final days = (json['days'] as List<dynamic>? ?? [])
+        .map((item) => FestivalCalendarDayDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+    return FestivalCalendarResponseDto(
+      year: json['year'] as int,
+      month: json['month'] as int,
+      days: days,
+    );
+  }
+}
+
+class FestivalPujaMuhuratDto {
+  final String id;
+  final String name;
+  final String start;
+  final String end;
+  final int durationMinutes;
+  final String? description;
+
+  FestivalPujaMuhuratDto({
+    required this.id,
+    required this.name,
+    required this.start,
+    required this.end,
+    required this.durationMinutes,
+    required this.description,
+  });
+
+  factory FestivalPujaMuhuratDto.fromJson(Map<String, dynamic> json) {
+    return FestivalPujaMuhuratDto(
+      id: json['id'] as String,
+      name: json['name'] as String? ?? '',
+      start: json['start'] as String? ?? '',
+      end: json['end'] as String? ?? '',
+      durationMinutes: json['duration_minutes'] as int? ?? 0,
+      description: json['description'] as String?,
+    );
+  }
+}
+
+class FestivalDateOccurrenceDto {
+  final String date;
+  final String? weekday;
+  final List<String> traditions;
+  final String? adhikStatus;
+  final String? kshayaLabel;
+  final List<FestivalPujaMuhuratDto> pujaMuhurats;
+  final bool? primary;
+
+  FestivalDateOccurrenceDto({
+    required this.date,
+    required this.weekday,
+    required this.traditions,
+    required this.adhikStatus,
+    required this.kshayaLabel,
+    required this.pujaMuhurats,
+    required this.primary,
+  });
+
+  factory FestivalDateOccurrenceDto.fromJson(Map<String, dynamic> json) {
+    final traditions = (json['traditions'] as List<dynamic>? ?? [])
+        .map((item) => item.toString())
+        .toList();
+    final muhurats = (json['puja_muhurats'] as List<dynamic>? ?? [])
+        .map((item) => FestivalPujaMuhuratDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+    return FestivalDateOccurrenceDto(
+      date: json['date'] as String? ?? '',
+      weekday: json['weekday'] as String?,
+      traditions: traditions,
+      adhikStatus: json['adhik_status'] as String?,
+      kshayaLabel: json['kshaya_label'] as String?,
+      pujaMuhurats: muhurats,
+      primary: json['primary'] as bool?,
+    );
+  }
+}
+
+class FestivalVariantDatesDto {
+  final String id;
+  final String name;
+  final int count;
+  final List<String> scopeTraditions;
+  final List<FestivalDateOccurrenceDto> dates;
+
+  FestivalVariantDatesDto({
+    required this.id,
+    required this.name,
+    required this.count,
+    required this.scopeTraditions,
+    required this.dates,
+  });
+
+  factory FestivalVariantDatesDto.fromJson(Map<String, dynamic> json) {
+    final scope = (json['scope_traditions'] as List<dynamic>? ?? [])
+        .map((item) => item.toString())
+        .toList();
+    final dates = (json['dates'] as List<dynamic>? ?? [])
+        .map((item) => FestivalDateOccurrenceDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+    return FestivalVariantDatesDto(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      count: json['count'] as int? ?? dates.length,
+      scopeTraditions: scope,
+      dates: dates,
+    );
+  }
+}
+
+class FestivalDatesResponseDto {
+  final String festivalId;
+  final int year;
+  final bool includeChildren;
+  final List<FestivalVariantDatesDto> variants;
+  final int total;
+
+  FestivalDatesResponseDto({
+    required this.festivalId,
+    required this.year,
+    required this.includeChildren,
+    required this.variants,
+    required this.total,
+  });
+
+  factory FestivalDatesResponseDto.fromJson(Map<String, dynamic> json) {
+    final variants = (json['variants'] as List<dynamic>? ?? [])
+        .map((item) => FestivalVariantDatesDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+    return FestivalDatesResponseDto(
+      festivalId: json['festival_id'] as String? ?? '',
+      year: json['year'] as int? ?? 0,
+      includeChildren: json['include_children'] as bool? ?? false,
+      variants: variants,
+      total: json['total'] as int? ?? variants.length,
+    );
   }
 }
 
