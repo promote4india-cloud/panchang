@@ -69,7 +69,19 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
      "ALTER TABLE zodiac_signs ADD COLUMN aspects_of_life TEXT"),
     ("zodiac_signs", "twelve_houses",
      "ALTER TABLE zodiac_signs ADD COLUMN twelve_houses TEXT"),
+    # LLM cleaning layer — tracks which rows have been LLM-cleaned.
+    # NULL  = not yet cleaned (or force-reset for re-clean).
+    # TEXT  = ISO datetime of last successful LLM clean.
+    ("festival_content", "llm_cleaned_at",
+     "ALTER TABLE festival_content ADD COLUMN llm_cleaned_at TEXT"),
+    ("muhurat_content", "llm_cleaned_at",
+     "ALTER TABLE muhurat_content ADD COLUMN llm_cleaned_at TEXT"),
+    ("horoscope_predictions", "llm_cleaned_at",
+     "ALTER TABLE horoscope_predictions ADD COLUMN llm_cleaned_at TEXT"),
+    ("zodiac_signs", "llm_cleaned_at",
+     "ALTER TABLE zodiac_signs ADD COLUMN llm_cleaned_at TEXT"),
 ]
+
 
 
 def _apply_migrations(conn: sqlite3.Connection) -> None:

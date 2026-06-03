@@ -1,16 +1,38 @@
 from pathlib import Path
 from datetime import date
 import logging
-import os
 import sys
 import threading
 
-sys.path.append(str(Path(__file__).parent.parent))
+# Make the repository root importable when running `uvicorn app:app` from
+# inside the backend directory.
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Load .env FIRST — before any backend.* imports read os.getenv() via config.py.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
+
+# Print LLM config at startup so running process shows which model/key it will use
+try:
+	from backend.config import LLM_MODEL, GEMINI_API_KEY
+	masked = None if not GEMINI_API_KEY else GEMINI_API_KEY[:8] + "..."
+	print(f"[startup] LLM config: LLM_MODEL={LLM_MODEL} GEMINI_API_KEY_set={bool(GEMINI_API_KEY)} GEMINI_API_KEY={masked}")
+except Exception:
+	# Keep startup robust — don't crash if config import has issues
+	import traceback
+	traceback.print_exc()
+sys.path.append(str(Path(__file__).parent.parent))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.cors import CORSMiddleware
 
+from backend.config import (
+    CORS_ALLOW_ORIGINS,
+    FESTIVAL_SNAPSHOT_PREWARM_AYANAMSA,
+    FESTIVAL_SNAPSHOT_PREWARM_ENABLED,
+    FESTIVAL_SNAPSHOT_PREWARM_POINTS,
+    FESTIVAL_SNAPSHOT_PREWARM_TZ,
+    FESTIVAL_SNAPSHOT_PREWARM_YEARS,
+)
 from backend.services.db import ensure_content_schema
 from backend.services.festival_rules_seed import seed_festival_rules
 from backend.services.festivals import _year_snapshot
@@ -22,6 +44,7 @@ from backend.routers.muhurat import router as muhurat_router
 from backend.routers.panchang import router as panchang_router
 from backend.routers.reference import router as reference_router
 from backend.routers.scraper import router as scraper_router
+from backend.routers.llm import router as llm_router
 
 ensure_database()           # GeoNames build (only on first run)
 ensure_content_schema()     # additive editorial tables — safe on every boot
@@ -52,25 +75,17 @@ def _parse_prewarm_points(raw: str) -> list[tuple[float, float]]:
 
 
 def _run_snapshot_prewarm() -> None:
-	if os.getenv("FESTIVAL_SNAPSHOT_PREWARM_ENABLED", "1") != "1":
+	if not FESTIVAL_SNAPSHOT_PREWARM_ENABLED:
 		return
 
-	default_points = "28.6139:77.2090;19.0760:72.8777;13.0827:80.2707;22.5726:88.3639"
-	raw_points = os.getenv("FESTIVAL_SNAPSHOT_PREWARM_POINTS", default_points)
-	points = _parse_prewarm_points(raw_points)
+	points = _parse_prewarm_points(FESTIVAL_SNAPSHOT_PREWARM_POINTS)
 	if not points:
 		log.warning("Snapshot prewarm skipped: no valid points configured.")
 		return
 
-	try:
-		year_count = max(1, int(os.getenv("FESTIVAL_SNAPSHOT_PREWARM_YEARS", "1")))
-	except ValueError:
-		year_count = 1
-
-	tz = os.getenv("FESTIVAL_SNAPSHOT_PREWARM_TZ", "Asia/Kolkata")
-	ayanamsa = os.getenv("FESTIVAL_SNAPSHOT_PREWARM_AYANAMSA", "lahiri")
-	start_year = date.today().year
-	years = [start_year + i for i in range(year_count)]
+	tz       = FESTIVAL_SNAPSHOT_PREWARM_TZ
+	ayanamsa = FESTIVAL_SNAPSHOT_PREWARM_AYANAMSA
+	years    = [date.today().year + i for i in range(FESTIVAL_SNAPSHOT_PREWARM_YEARS)]
 
 	import time
 	msg = (
@@ -105,15 +120,9 @@ def _run_snapshot_prewarm() -> None:
 def _startup_prewarm() -> None:
 	threading.Thread(target=_run_snapshot_prewarm, daemon=True).start()
 
-raw_origins = os.getenv(
-	"CORS_ALLOW_ORIGINS",
-	"http://localhost:8000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
-)
-allow_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
-
 app.add_middleware(
 	CORSMiddleware,
-	allow_origins=["*"],
+	allow_origins=CORS_ALLOW_ORIGINS,
 	allow_credentials=True,
 	allow_methods=["*"],
 	allow_headers=["*"],
@@ -127,3 +136,4 @@ app.include_router(reference_router)
 app.include_router(festivals_router)
 app.include_router(horoscope_router)
 app.include_router(scraper_router)
+app.include_router(llm_router)

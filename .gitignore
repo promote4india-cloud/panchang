@@ -50,6 +50,7 @@ app.*.map.json
 .env
 .venv/
 */services/data/
+*/services/data copy/
 __pycache__/
 *.pyc
 *.pyo
