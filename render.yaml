@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: panchang-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install uv && uv sync --frozen
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: LLM_MODEL
+        value: google_genai:gemini-2.0-flash
+      - key: GEMINI_API_KEY
+        sync: false   # set manually in Render dashboard as a secret
+      - key: LLM_SCRUB_ENABLED
+        value: "1"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: panchang-db
+          property: connectionString
+      - key: CORS_ALLOW_ORIGINS
+        value: https://your-frontend-domain.com  # update before going live
+      - key: FESTIVAL_SNAPSHOT_PREWARM_ENABLED
+        value: "1"
+
+databases:
+  - name: panchang-db
+    databaseName: panchang
+    plan: free

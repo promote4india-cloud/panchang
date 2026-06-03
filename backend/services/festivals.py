@@ -376,18 +376,18 @@ def _snapshot_cache_get(
             """
             SELECT payload_gzip
               FROM festival_year_snapshots
-             WHERE year = ?
-               AND lat_key = ?
-               AND lon_key = ?
-               AND tz_name = ?
-               AND ayanamsa = ?
-               AND schema_version = ?
+             WHERE year = %s
+               AND lat_key = %s
+               AND lon_key = %s
+               AND tz_name = %s
+               AND ayanamsa = %s
+               AND schema_version = %s
             """,
             key,
         ).fetchone()
         if not row:
             return None
-        return _deserialize_snapshot(row["payload_gzip"])
+        return _deserialize_snapshot(bytes(row["payload_gzip"]))
     except Exception:
         return None
     finally:
@@ -414,11 +414,11 @@ def _snapshot_cache_put(
             INSERT INTO festival_year_snapshots
                 (year, lat_key, lon_key, tz_name, ayanamsa,
                  schema_version, payload_gzip, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT(year, lat_key, lon_key, tz_name, ayanamsa, schema_version)
             DO UPDATE SET
                 payload_gzip = excluded.payload_gzip,
-                updated_at = datetime('now')
+                updated_at = NOW()
             """,
             (*key, payload),
         )
@@ -1638,11 +1638,12 @@ def festivals_in_range(
                    COALESCE(c.name, f.id) AS name
               FROM festivals f
               LEFT JOIN festival_content c
-                ON c.festival_id = f.id AND c.language = ?
+                ON c.festival_id = f.id AND c.language = %s
              WHERE f.rule_type IS NOT NULL
             """,
             (language,),
         ).fetchall()
+
     finally:
         conn.close()
 

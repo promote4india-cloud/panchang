@@ -44,6 +44,15 @@ GROQ_API_KEY: str | None = os.getenv("GROQ_API_KEY")
 GROQ_MODEL: str = os.getenv("GROQ_MODEL", LLM_MODEL)
 
 # ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+
+#: PostgreSQL connection string — set automatically by Render when a Postgres
+#: database is linked, or manually via DATABASE_URL in .env for local dev.
+#: Format: postgresql://user:password@host:5432/dbname
+DATABASE_URL: str | None = os.getenv("DATABASE_URL")
+
+# ---------------------------------------------------------------------------
 # CORS
 # ---------------------------------------------------------------------------
 

@@ -52,8 +52,9 @@ def _persist_festival(p: ParsedFestival) -> None:
             parent_slug = p.parent_id.replace(".", "/")
             conn.execute(
                 """
-                INSERT OR IGNORE INTO festivals (id, parent_id, slug_path, kind)
-                VALUES (?, NULL, ?, 'festival')
+                INSERT INTO festivals (id, parent_id, slug_path, kind)
+                VALUES (%s, NULL, %s, 'festival')
+                ON CONFLICT(id) DO NOTHING
                 """,
                 (p.parent_id, parent_slug),
             )
@@ -62,7 +63,7 @@ def _persist_festival(p: ParsedFestival) -> None:
             INSERT INTO festivals (id, parent_id, slug_path, kind, type,
                                    auspiciousness, rule_type, rule_json,
                                    thumbnail_url, source_url, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT(id) DO UPDATE SET
                 parent_id=excluded.parent_id,
                 slug_path=excluded.slug_path,
@@ -73,7 +74,7 @@ def _persist_festival(p: ParsedFestival) -> None:
                 rule_json=COALESCE(excluded.rule_json, festivals.rule_json),
                 thumbnail_url=COALESCE(excluded.thumbnail_url, festivals.thumbnail_url),
                 source_url=excluded.source_url,
-                updated_at=datetime('now')
+                updated_at=NOW()
             """,
             (p.festival_id, p.parent_id, p.slug_path, p.kind, p.type,
              p.auspiciousness, p.rule_type, p.rule_json,
@@ -84,7 +85,7 @@ def _persist_festival(p: ParsedFestival) -> None:
             INSERT INTO festival_content (festival_id, language, name, subtitle,
                                           about, significance, history,
                                           scriptures, puja_vidhi, source_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(festival_id, language) DO UPDATE SET
                 name=excluded.name,
                 subtitle=excluded.subtitle,
@@ -93,7 +94,7 @@ def _persist_festival(p: ParsedFestival) -> None:
                 history=excluded.history,
                 scriptures=excluded.scriptures,
                 puja_vidhi=excluded.puja_vidhi,
-                scraped_at=datetime('now'),
+                scraped_at=NOW(),
                 source_url=excluded.source_url
             """,
             (p.festival_id, p.language, p.name, p.subtitle, p.about,
@@ -101,21 +102,23 @@ def _persist_festival(p: ParsedFestival) -> None:
              p.source_url),
         )
         conn.execute(
-            "DELETE FROM festival_rituals WHERE festival_id = ? AND language = ?",
+            "DELETE FROM festival_rituals WHERE festival_id = %s AND language = %s",
             (p.festival_id, p.language),
         )
-        conn.executemany(
-            "INSERT INTO festival_rituals VALUES (?, ?, ?, ?)",
-            [(p.festival_id, p.language, i, t) for i, t in enumerate(p.rituals)],
-        )
+        with conn.cursor() as _cur:
+            _cur.executemany(
+                "INSERT INTO festival_rituals VALUES (%s, %s, %s, %s)",
+                [(p.festival_id, p.language, i, t) for i, t in enumerate(p.rituals)],
+            )
         conn.execute(
-            "DELETE FROM festival_faqs WHERE festival_id = ? AND language = ?",
+            "DELETE FROM festival_faqs WHERE festival_id = %s AND language = %s",
             (p.festival_id, p.language),
         )
-        conn.executemany(
-            "INSERT INTO festival_faqs VALUES (?, ?, ?, ?, ?)",
-            [(p.festival_id, p.language, i, q, a) for i, (q, a) in enumerate(p.faqs)],
-        )
+        with conn.cursor() as _cur:
+            _cur.executemany(
+                "INSERT INTO festival_faqs VALUES (%s, %s, %s, %s, %s)",
+                [(p.festival_id, p.language, i, q, a) for i, (q, a) in enumerate(p.faqs)],
+            )
         conn.commit()
     finally:
         conn.close()
@@ -127,7 +130,7 @@ def _persist_muhurat(p: ParsedMuhurat) -> None:
         conn.execute(
             """
             INSERT INTO muhurat_types (id, category, computable, source_url)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT(id) DO UPDATE SET
                 category=excluded.category,
                 computable=excluded.computable,
@@ -139,35 +142,37 @@ def _persist_muhurat(p: ParsedMuhurat) -> None:
             """
             INSERT INTO muhurat_content (muhurat_id, language, name, description,
                                          vedic_basis, importance, source_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(muhurat_id, language) DO UPDATE SET
                 name=excluded.name,
                 description=excluded.description,
                 vedic_basis=excluded.vedic_basis,
                 importance=excluded.importance,
-                scraped_at=datetime('now'),
+                scraped_at=NOW(),
                 source_url=excluded.source_url
             """,
             (p.muhurat_id, p.language, p.name, p.description,
              p.vedic_basis, p.importance, p.source_url),
         )
         conn.execute(
-            "DELETE FROM muhurat_subsections WHERE muhurat_id = ? AND language = ?",
+            "DELETE FROM muhurat_subsections WHERE muhurat_id = %s AND language = %s",
             (p.muhurat_id, p.language),
         )
-        conn.executemany(
-            "INSERT INTO muhurat_subsections VALUES (?, ?, ?, ?, ?)",
-            [(p.muhurat_id, p.language, i, h, b)
-             for i, (h, b) in enumerate(p.subsections)],
-        )
+        with conn.cursor() as _cur:
+            _cur.executemany(
+                "INSERT INTO muhurat_subsections VALUES (%s, %s, %s, %s, %s)",
+                [(p.muhurat_id, p.language, i, h, b)
+                 for i, (h, b) in enumerate(p.subsections)],
+            )
         conn.execute(
-            "DELETE FROM muhurat_faqs WHERE muhurat_id = ? AND language = ?",
+            "DELETE FROM muhurat_faqs WHERE muhurat_id = %s AND language = %s",
             (p.muhurat_id, p.language),
         )
-        conn.executemany(
-            "INSERT INTO muhurat_faqs VALUES (?, ?, ?, ?, ?)",
-            [(p.muhurat_id, p.language, i, q, a) for i, (q, a) in enumerate(p.faqs)],
-        )
+        with conn.cursor() as _cur:
+            _cur.executemany(
+                "INSERT INTO muhurat_faqs VALUES (%s, %s, %s, %s, %s)",
+                [(p.muhurat_id, p.language, i, q, a) for i, (q, a) in enumerate(p.faqs)],
+            )
         conn.commit()
     finally:
         conn.close()
@@ -304,7 +309,7 @@ async def list_jobs(limit: int = Query(20, ge=1, le=200)):
     conn = connect_ro()
     try:
         rows = conn.execute(
-            "SELECT * FROM crawl_jobs ORDER BY started_at DESC LIMIT ?", (limit,),
+            "SELECT * FROM crawl_jobs ORDER BY started_at DESC LIMIT %s", (limit,),
         ).fetchall()
     finally:
         conn.close()
@@ -318,7 +323,7 @@ async def job_detail(job_id: str):
     conn = connect_ro()
     try:
         row = conn.execute(
-            "SELECT * FROM crawl_jobs WHERE id = ?", (job_id,),
+            "SELECT * FROM crawl_jobs WHERE id = %s", (job_id,),
         ).fetchone()
         if not row:
             raise HTTPException(404, f"Unknown job_id: {job_id}")
@@ -326,14 +331,14 @@ async def job_detail(job_id: str):
             r["status"]: r["n"]
             for r in conn.execute(
                 "SELECT status, COUNT(*) n FROM crawl_tasks "
-                "WHERE last_job_id = ? GROUP BY status",
+                "WHERE last_job_id = %s GROUP BY status",
                 (job_id,),
             ).fetchall()
         }
         recent_errors = [
             dict(r) for r in conn.execute(
                 "SELECT url, error, updated_at FROM crawl_tasks "
-                "WHERE last_job_id = ? AND status = 'failed' "
+                "WHERE last_job_id = %s AND status = 'failed' "
                 "ORDER BY updated_at DESC LIMIT 25",
                 (job_id,),
             ).fetchall()
@@ -357,10 +362,10 @@ async def list_tasks(
     sql = "SELECT * FROM crawl_tasks WHERE 1=1"
     params: list = []
     if status:
-        sql += " AND status = ?"; params.append(status)
+        sql += " AND status = %s"; params.append(status)
     if scope:
-        sql += " AND scope = ?";  params.append(scope)
-    sql += " ORDER BY updated_at DESC LIMIT ?"
+        sql += " AND scope = %s";  params.append(scope)
+    sql += " ORDER BY updated_at DESC LIMIT %s"
     params.append(limit)
     conn = connect_ro()
     try:

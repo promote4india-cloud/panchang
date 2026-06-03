@@ -39,7 +39,8 @@ from backend.services.festivals import _year_snapshot
 from backend.routers.celestial import router as celestial_router
 from backend.routers.festivals import router as festivals_router
 from backend.routers.horoscope import router as horoscope_router
-from backend.routers.locations import ensure_database, router as locations_router
+from backend.services.locations import ensure_database
+from backend.routers.locations import router as locations_router
 from backend.routers.muhurat import router as muhurat_router
 from backend.routers.panchang import router as panchang_router
 from backend.routers.reference import router as reference_router

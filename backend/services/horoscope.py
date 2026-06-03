@@ -119,7 +119,7 @@ _SELECT_COLS = (
 
 
 def _row_to_dict(row) -> dict:
-    out = {k: row[k] for k in row.keys()}
+    out = dict(row)
     # Deserialize the JSON ratings dict for caller convenience.
     raw = out.pop("ratings_json", None)
     out["ratings"] = json.loads(raw) if raw else None
@@ -131,7 +131,7 @@ def _select(sign: str, period: Period, language: str, key: str) -> dict | None:
     try:
         row = conn.execute(
             f"SELECT {_SELECT_COLS} FROM horoscope_predictions "
-            "WHERE sign=? AND period=? AND language=? AND period_key=?",
+            "WHERE sign=%s AND period=%s AND language=%s AND period_key=%s",
             (sign, period, language, key),
         ).fetchone()
     finally:
@@ -149,7 +149,7 @@ def _upsert(parsed: ParsedHoroscope, key: str) -> None:
                 sign, period, language, period_key, date_label,
                 prediction, love, career, finance, health, family, advice,
                 ratings_json, source_url, scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT(sign, period, language, period_key) DO UPDATE SET
                 date_label   = excluded.date_label,
                 prediction   = excluded.prediction,
@@ -161,7 +161,7 @@ def _upsert(parsed: ParsedHoroscope, key: str) -> None:
                 advice       = excluded.advice,
                 ratings_json = excluded.ratings_json,
                 source_url   = excluded.source_url,
-                scraped_at   = datetime('now')
+                scraped_at   = NOW()
             """,
             (
                 parsed.sign, parsed.period, parsed.language, key, parsed.date_label,
@@ -189,7 +189,7 @@ def _upsert_deepdive(d: ParsedSignDeepDive) -> None:
                 id, language, overview, physical_appearance, mental_ability,
                 characteristics, aspects_of_life, twelve_houses,
                 source_url, scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT(id, language) DO UPDATE SET
                 overview            = COALESCE(excluded.overview,            zodiac_signs.overview),
                 physical_appearance = COALESCE(excluded.physical_appearance, zodiac_signs.physical_appearance),
@@ -198,7 +198,7 @@ def _upsert_deepdive(d: ParsedSignDeepDive) -> None:
                 aspects_of_life     = COALESCE(excluded.aspects_of_life,     zodiac_signs.aspects_of_life),
                 twelve_houses       = COALESCE(excluded.twelve_houses,       zodiac_signs.twelve_houses),
                 source_url          = excluded.source_url,
-                scraped_at          = datetime('now')
+                scraped_at          = NOW()
             """,
             (
                 d.sign, d.language, d.overview, d.physical_appearance,

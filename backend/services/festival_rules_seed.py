@@ -821,27 +821,28 @@ def seed_festival_rules() -> dict[str, int]:
         inserted = 0
         for fid, meta in NEW_FESTIVALS.items():
             exists = conn.execute(
-                "SELECT 1 FROM festivals WHERE id = ?", (fid,)
+                "SELECT 1 FROM festivals WHERE id = %s", (fid,)
             ).fetchone()
             if exists:
                 continue
             parent_id = meta.get("parent_id")
             if parent_id:
                 parent_exists = conn.execute(
-                    "SELECT 1 FROM festivals WHERE id = ?", (parent_id,)
+                    "SELECT 1 FROM festivals WHERE id = %s", (parent_id,)
                 ).fetchone()
                 if not parent_exists:
                     parent_slug = parent_id.replace(".", "/")
                     conn.execute(
-                        """INSERT OR IGNORE INTO festivals
+                        """INSERT INTO festivals
                                (id, parent_id, slug_path, kind, source_url)
-                               VALUES (?, NULL, ?, 'festival', ?)""",
+                               VALUES (%s, NULL, %s, 'festival', %s)
+                            ON CONFLICT(id) DO NOTHING""",
                         (parent_id, parent_slug, "synthetic://internal"),
                     )
             conn.execute(
                 """INSERT INTO festivals
                        (id, parent_id, slug_path, kind, type, source_url)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
                 (
                     fid,
                     parent_id,
@@ -852,9 +853,10 @@ def seed_festival_rules() -> dict[str, int]:
                 ),
             )
             conn.execute(
-                """INSERT OR IGNORE INTO festival_content
+                """INSERT INTO festival_content
                        (festival_id, language, name, source_url)
-                       VALUES (?, 'en', ?, 'synthetic://internal')""",
+                       VALUES (%s, 'en', %s, 'synthetic://internal')
+                    ON CONFLICT(festival_id, language) DO NOTHING""",
                 (fid, meta["name"]),
             )
             inserted += 1
@@ -869,15 +871,15 @@ def seed_festival_rules() -> dict[str, int]:
                 unknown += 1
                 continue
             cur = conn.execute(
-                "SELECT rule_type, rule_json FROM festivals WHERE id = ?", (fid,)
+                "SELECT rule_type, rule_json FROM festivals WHERE id = %s", (fid,)
             ).fetchone()
             new_json = json.dumps(payload, sort_keys=True)
             if cur["rule_type"] == rtype and cur["rule_json"] == new_json:
                 continue
             conn.execute(
                 """UPDATE festivals
-                      SET rule_type = ?, rule_json = ?, updated_at = datetime('now')
-                    WHERE id = ?""",
+                      SET rule_type = %s, rule_json = %s, updated_at = NOW()
+                    WHERE id = %s""",
                 (rtype, new_json, fid),
             )
             updated += 1
@@ -892,14 +894,14 @@ def seed_festival_rules() -> dict[str, int]:
                 json.dumps(sorted(set(SCOPES[fid]))) if fid in SCOPES else None
             )
             cur_row = conn.execute(
-                "SELECT scope_traditions FROM festivals WHERE id = ?", (fid,)
+                "SELECT scope_traditions FROM festivals WHERE id = %s", (fid,)
             ).fetchone()
             if cur_row["scope_traditions"] == new_scope:
                 continue
             conn.execute(
                 """UPDATE festivals
-                      SET scope_traditions = ?, updated_at = datetime('now')
-                    WHERE id = ?""",
+                      SET scope_traditions = %s, updated_at = NOW()
+                    WHERE id = %s""",
                 (new_scope, fid),
             )
             scope_updated += 1

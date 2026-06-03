@@ -141,7 +141,7 @@ def _persist_job(job: CrawlJob) -> None:
             """
             INSERT INTO crawl_jobs (id, scope, language, status, started_at,
                                     finished_at, is_resume, force, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(id) DO UPDATE SET
                 status=excluded.status,
                 finished_at=excluded.finished_at,
@@ -171,7 +171,7 @@ def upsert_task(
             """
             INSERT INTO crawl_tasks (url, last_job_id, scope, depth, status,
                                      error, attempts, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'))
+            VALUES (%s, %s, %s, %s, %s, %s, 1, NOW())
             ON CONFLICT(url) DO UPDATE SET
                 last_job_id=excluded.last_job_id,
                 scope=excluded.scope,
@@ -179,7 +179,7 @@ def upsert_task(
                 status=excluded.status,
                 error=excluded.error,
                 attempts=crawl_tasks.attempts + 1,
-                updated_at=datetime('now')
+                updated_at=NOW()
             """,
             (url, job_id, scope, depth, status, error),
         )

@@ -1,9 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from backend.services.locations import (
-    DB_PATH,
-    download_geonames,
-    build_database,
+    ensure_database,
     search_locations,
     resolve_location,
     get_location,
@@ -12,13 +10,6 @@ from typing import Optional
 
 
 router = APIRouter(prefix="/v1/locations", tags=["locations"])
-
-
-def ensure_database() -> None:
-    if DB_PATH.exists():
-        return
-    paths = download_geonames()
-    build_database(paths)
 
 
 @router.get("/search")

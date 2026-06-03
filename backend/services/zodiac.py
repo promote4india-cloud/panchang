@@ -108,14 +108,14 @@ def _select_prose(sign_id: str, language: str) -> dict | None:
     try:
         row = conn.execute(
             f"SELECT {', '.join(_PROSE_COLS)}, source_url, scraped_at "
-            "FROM zodiac_signs WHERE id=? AND language=?",
+            "FROM zodiac_signs WHERE id=%s AND language=%s",
             (sign_id, language),
         ).fetchone()
     finally:
         conn.close()
     if not row:
         return None
-    return {k: row[k] for k in row.keys()}
+    return dict(row)
 
 
 def _upsert_intro(parsed: ParsedSignIntro) -> None:
@@ -128,14 +128,14 @@ def _upsert_intro(parsed: ParsedSignIntro) -> None:
             INSERT INTO zodiac_signs (
                 id, language, summary, traits, love, compatibility,
                 source_url, scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT(id, language) DO UPDATE SET
                 summary       = COALESCE(excluded.summary,       zodiac_signs.summary),
                 traits        = COALESCE(excluded.traits,        zodiac_signs.traits),
                 love          = COALESCE(excluded.love,          zodiac_signs.love),
                 compatibility = COALESCE(excluded.compatibility, zodiac_signs.compatibility),
                 source_url    = excluded.source_url,
-                scraped_at    = datetime('now')
+                scraped_at    = NOW()
             """,
             (
                 parsed.sign, parsed.language, parsed.summary, parsed.traits,

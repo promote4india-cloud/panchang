@@ -231,7 +231,7 @@ def _make_festival_runner(req: LLMCleanRequest):
             if not req.force:
                 sql += " AND (fc.llm_cleaned_at IS NULL)"
             if req.language:
-                sql += " AND fc.language = ?"
+                sql += " AND fc.language = %s"
                 params.append(req.language)
             if req.limit:
                 sql += f" LIMIT {req.limit}"
@@ -320,15 +320,15 @@ def _make_festival_runner(req: LLMCleanRequest):
                     conn.execute(
                         """
                         UPDATE festival_content SET
-                            name        = COALESCE(?, name),
-                            subtitle    = COALESCE(?, subtitle),
-                            about       = COALESCE(?, about),
-                            significance= COALESCE(?, significance),
-                            history     = COALESCE(?, history),
-                            scriptures  = COALESCE(?, scriptures),
-                            puja_vidhi  = COALESCE(?, puja_vidhi),
-                            llm_cleaned_at = datetime('now')
-                        WHERE festival_id=? AND language=?
+                            name        = COALESCE(%s, name),
+                            subtitle    = COALESCE(%s, subtitle),
+                            about       = COALESCE(%s, about),
+                            significance= COALESCE(%s, significance),
+                            history     = COALESCE(%s, history),
+                            scriptures  = COALESCE(%s, scriptures),
+                            puja_vidhi  = COALESCE(%s, puja_vidhi),
+                            llm_cleaned_at = NOW()
+                        WHERE festival_id=%s AND language=%s
                         """,
                         (
                             c.get("name"), c.get("subtitle"), c.get("about"),
@@ -341,25 +341,27 @@ def _make_festival_runner(req: LLMCleanRequest):
                     if "rituals" in c and isinstance(c["rituals"], list):
                         conn.execute(
                             "DELETE FROM festival_rituals "
-                            "WHERE festival_id=? AND language=?", (fid, lang),
+                            "WHERE festival_id=%s AND language=%s", (fid, lang),
                         )
-                        conn.executemany(
-                            "INSERT INTO festival_rituals VALUES (?,?,?,?)",
-                            [(fid, lang, pos, txt)
-                             for pos, txt in enumerate(c["rituals"])],
-                        )
+                        with conn.cursor() as _cur:
+                            _cur.executemany(
+                                "INSERT INTO festival_rituals VALUES (%s,%s,%s,%s)",
+                                [(fid, lang, pos, txt)
+                                 for pos, txt in enumerate(c["rituals"])],
+                            )
 
                     if "faqs" in c and isinstance(c["faqs"], list):
                         conn.execute(
                             "DELETE FROM festival_faqs "
-                            "WHERE festival_id=? AND language=?", (fid, lang),
+                            "WHERE festival_id=%s AND language=%s", (fid, lang),
                         )
-                        conn.executemany(
-                            "INSERT INTO festival_faqs VALUES (?,?,?,?,?)",
-                            [(fid, lang, pos, qa[0], qa[1])
-                             for pos, qa in enumerate(c["faqs"])
-                             if isinstance(qa, (list, tuple)) and len(qa) == 2],
-                        )
+                        with conn.cursor() as _cur:
+                            _cur.executemany(
+                                "INSERT INTO festival_faqs VALUES (%s,%s,%s,%s,%s)",
+                                [(fid, lang, pos, qa[0], qa[1])
+                                 for pos, qa in enumerate(c["faqs"])
+                                 if isinstance(qa, (list, tuple)) and len(qa) == 2],
+                            )
 
                     job.counters["written"] += 1
                     written_this_batch += 1
@@ -390,7 +392,7 @@ def _make_muhurat_runner(req: LLMCleanRequest):
             if not req.force:
                 sql += " AND (mc.llm_cleaned_at IS NULL)"
             if req.language:
-                sql += " AND mc.language = ?"
+                sql += " AND mc.language = %s"
                 params.append(req.language)
             if req.limit:
                 sql += f" LIMIT {req.limit}"
@@ -417,14 +419,14 @@ def _make_muhurat_runner(req: LLMCleanRequest):
                 row["subsections"] = [
                     [r["heading"] or "", r["body"]] for r in conn.execute(
                         "SELECT heading, body FROM muhurat_subsections "
-                        "WHERE muhurat_id=? AND language=? AND body IS NOT NULL ORDER BY position",
+                        "WHERE muhurat_id=%s AND language=%s AND body IS NOT NULL ORDER BY position",
                         (row["muhurat_id"], row["language"]),
                     ).fetchall()
                 ]
                 row["faqs"] = [
                     [r["question"], r["answer"]] for r in conn.execute(
                         "SELECT question, answer FROM muhurat_faqs "
-                        "WHERE muhurat_id=? AND language=? ORDER BY position",
+                        "WHERE muhurat_id=%s AND language=%s ORDER BY position",
                         (row["muhurat_id"], row["language"]),
                     ).fetchall()
                 ]
@@ -474,12 +476,12 @@ def _make_muhurat_runner(req: LLMCleanRequest):
                     conn.execute(
                         """
                         UPDATE muhurat_content SET
-                            name        = COALESCE(?, name),
-                            description = COALESCE(?, description),
-                            vedic_basis = COALESCE(?, vedic_basis),
-                            importance  = COALESCE(?, importance),
-                            llm_cleaned_at = datetime('now')
-                        WHERE muhurat_id=? AND language=?
+                            name        = COALESCE(%s, name),
+                            description = COALESCE(%s, description),
+                            vedic_basis = COALESCE(%s, vedic_basis),
+                            importance  = COALESCE(%s, importance),
+                            llm_cleaned_at = NOW()
+                        WHERE muhurat_id=%s AND language=%s
                         """,
                         (
                             c.get("name"), c.get("description"),
@@ -491,26 +493,28 @@ def _make_muhurat_runner(req: LLMCleanRequest):
                     if "subsections" in c and isinstance(c["subsections"], list):
                         conn.execute(
                             "DELETE FROM muhurat_subsections "
-                            "WHERE muhurat_id=? AND language=?", (mid, lang),
+                            "WHERE muhurat_id=%s AND language=%s", (mid, lang),
                         )
-                        conn.executemany(
-                            "INSERT INTO muhurat_subsections VALUES (?,?,?,?,?)",
-                            [(mid, lang, pos, ss[0], ss[1])
-                             for pos, ss in enumerate(c["subsections"])
-                             if isinstance(ss, (list, tuple)) and len(ss) == 2],
-                        )
+                        with conn.cursor() as _cur:
+                            _cur.executemany(
+                                "INSERT INTO muhurat_subsections VALUES (%s,%s,%s,%s,%s)",
+                                [(mid, lang, pos, ss[0], ss[1])
+                                 for pos, ss in enumerate(c["subsections"])
+                                 if isinstance(ss, (list, tuple)) and len(ss) == 2],
+                            )
 
                     if "faqs" in c and isinstance(c["faqs"], list):
                         conn.execute(
                             "DELETE FROM muhurat_faqs "
-                            "WHERE muhurat_id=? AND language=?", (mid, lang),
+                            "WHERE muhurat_id=%s AND language=%s", (mid, lang),
                         )
-                        conn.executemany(
-                            "INSERT INTO muhurat_faqs VALUES (?,?,?,?,?)",
-                            [(mid, lang, pos, qa[0], qa[1])
-                             for pos, qa in enumerate(c["faqs"])
-                             if isinstance(qa, (list, tuple)) and len(qa) == 2],
-                        )
+                        with conn.cursor() as _cur:
+                            _cur.executemany(
+                                "INSERT INTO muhurat_faqs VALUES (%s,%s,%s,%s,%s)",
+                                [(mid, lang, pos, qa[0], qa[1])
+                                 for pos, qa in enumerate(c["faqs"])
+                                 if isinstance(qa, (list, tuple)) and len(qa) == 2],
+                            )
 
                     job.counters["written"] += 1
                     written_this_batch += 1
@@ -541,7 +545,7 @@ def _make_horoscope_runner(req: LLMCleanRequest):
             if not req.force:
                 sql += " AND (llm_cleaned_at IS NULL)"
             if req.language:
-                sql += " AND language = ?"
+                sql += " AND language = %s"
                 params.append(req.language)
             if req.limit:
                 sql += f" LIMIT {req.limit}"
@@ -608,15 +612,15 @@ def _make_horoscope_runner(req: LLMCleanRequest):
                     conn.execute(
                         """
                         UPDATE horoscope_predictions SET
-                            prediction = COALESCE(?, prediction),
-                            love       = COALESCE(?, love),
-                            career     = COALESCE(?, career),
-                            finance    = COALESCE(?, finance),
-                            health     = COALESCE(?, health),
-                            family     = COALESCE(?, family),
-                            advice     = COALESCE(?, advice),
-                            llm_cleaned_at = datetime('now')
-                        WHERE sign=? AND period=? AND language=? AND period_key=?
+                            prediction = COALESCE(%s, prediction),
+                            love       = COALESCE(%s, love),
+                            career     = COALESCE(%s, career),
+                            finance    = COALESCE(%s, finance),
+                            health     = COALESCE(%s, health),
+                            family     = COALESCE(%s, family),
+                            advice     = COALESCE(%s, advice),
+                            llm_cleaned_at = NOW()
+                        WHERE sign=%s AND period=%s AND language=%s AND period_key=%s
                         """,
                         (
                             c.get("prediction"), c.get("love"), c.get("career"),
@@ -656,7 +660,7 @@ def _make_deepdive_runner(req: LLMCleanRequest):
             if not req.force:
                 sql += " AND (llm_cleaned_at IS NULL)"
             if req.language:
-                sql += " AND language = ?"
+                sql += " AND language = %s"
                 params.append(req.language)
             if req.limit:
                 sql += f" LIMIT {req.limit}"
@@ -718,18 +722,18 @@ def _make_deepdive_runner(req: LLMCleanRequest):
                     conn.execute(
                         """
                         UPDATE zodiac_signs SET
-                            summary             = COALESCE(?, summary),
-                            traits              = COALESCE(?, traits),
-                            love                = COALESCE(?, love),
-                            compatibility       = COALESCE(?, compatibility),
-                            overview            = COALESCE(?, overview),
-                            physical_appearance = COALESCE(?, physical_appearance),
-                            mental_ability      = COALESCE(?, mental_ability),
-                            characteristics     = COALESCE(?, characteristics),
-                            aspects_of_life     = COALESCE(?, aspects_of_life),
-                            twelve_houses       = COALESCE(?, twelve_houses),
-                            llm_cleaned_at      = datetime('now')
-                        WHERE id=? AND language=?
+                            summary             = COALESCE(%s, summary),
+                            traits              = COALESCE(%s, traits),
+                            love                = COALESCE(%s, love),
+                            compatibility       = COALESCE(%s, compatibility),
+                            overview            = COALESCE(%s, overview),
+                            physical_appearance = COALESCE(%s, physical_appearance),
+                            mental_ability      = COALESCE(%s, mental_ability),
+                            characteristics     = COALESCE(%s, characteristics),
+                            aspects_of_life     = COALESCE(%s, aspects_of_life),
+                            twelve_houses       = COALESCE(%s, twelve_houses),
+                            llm_cleaned_at      = NOW()
+                        WHERE id=%s AND language=%s
                         """,
                         (
                             c.get("summary"), c.get("traits"),

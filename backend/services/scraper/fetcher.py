@@ -65,13 +65,13 @@ def get_cached_page(url: str) -> str | None:
     conn = connect_ro()
     try:
         row = conn.execute(
-            "SELECT body_gzip FROM scraped_pages WHERE url = ?", (url,)
+            "SELECT body_gzip FROM scraped_pages WHERE url = %s", (url,)
         ).fetchone()
     finally:
         conn.close()
     if row is None:
         return None
-    return gzip.decompress(row["body_gzip"]).decode("utf-8", errors="replace")
+    return gzip.decompress(bytes(row["body_gzip"])).decode("utf-8", errors="replace")
 
 
 async def fetch_page(
@@ -118,7 +118,7 @@ async def fetch_page(
             """
             INSERT INTO scraped_pages (
                 url, scope, ref_id, language, http_status, etag, fetched_at, body_gzip
-            ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
             ON CONFLICT(url) DO UPDATE SET
                 scope=excluded.scope,
                 ref_id=excluded.ref_id,
@@ -142,11 +142,11 @@ def _peek_cache(url: str) -> tuple[datetime, bytes] | None:
     conn = connect_ro()
     try:
         row = conn.execute(
-            "SELECT fetched_at, body_gzip FROM scraped_pages WHERE url = ?", (url,)
+            "SELECT fetched_at, body_gzip FROM scraped_pages WHERE url = %s", (url,)
         ).fetchone()
     finally:
         conn.close()
     if row is None:
         return None
-    fetched_at = datetime.fromisoformat(row["fetched_at"]).replace(tzinfo=timezone.utc)
-    return fetched_at, row["body_gzip"]
+    fetched_at = datetime.fromisoformat(str(row["fetched_at"])).replace(tzinfo=timezone.utc)
+    return fetched_at, bytes(row["body_gzip"])

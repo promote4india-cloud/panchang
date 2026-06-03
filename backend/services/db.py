@@ -1,38 +1,47 @@
 """
-Shared SQLite helpers for the editorial / scraped content tables.
+Shared PostgreSQL helpers for the editorial / scraped content tables.
 
-The database file (data/sqlite.db) is also used by services/locations.py for
-GeoNames data. The two layers are kept additive — schema.sql uses CREATE TABLE
-IF NOT EXISTS so the GeoNames build never collides with festival tables.
+Connection is obtained via DATABASE_URL (set in .env locally or injected by
+Render in production). Uses psycopg3 (psycopg[binary]) with dict_row so
+callers can access columns by name: row["col"] — same interface as before.
+
+Public API (unchanged from the SQLite version):
+    connect_rw()          -> psycopg.Connection  (read-write)
+    connect_ro()          -> psycopg.Connection  (read, uses same URL for now)
+    ensure_content_schema()                      (apply DDL on startup)
 """
 
 from __future__ import annotations
 
-import sqlite3
+import logging
 from pathlib import Path
 
-from .locations import DB_PATH  # single source of truth for the file path
+import psycopg
+from psycopg.rows import dict_row
+
+log = logging.getLogger(__name__)
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
-def connect_rw() -> sqlite3.Connection:
-    """Read-write connection with FK + WAL enabled."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+def _get_dsn() -> str:
+    from backend.config import DATABASE_URL  # local import avoids circular at module load
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL is not set. "
+            "Add it to your .env file or set it as an environment variable."
+        )
+    return DATABASE_URL
 
 
-def connect_ro() -> sqlite3.Connection:
-    """Read-only connection (preferred for query endpoints)."""
-    if not DB_PATH.exists():
-        raise RuntimeError(f"Database missing at {DB_PATH}")
-    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+def connect_rw() -> psycopg.Connection:
+    """Read-write connection with dict_row factory."""
+    return psycopg.connect(_get_dsn(), row_factory=dict_row)
+
+
+def connect_ro() -> psycopg.Connection:
+    """Read connection (uses same URL; Postgres handles concurrency natively)."""
+    return psycopg.connect(_get_dsn(), row_factory=dict_row)
 
 
 def ensure_content_schema() -> None:
@@ -40,17 +49,22 @@ def ensure_content_schema() -> None:
     ddl = SCHEMA_PATH.read_text(encoding="utf-8")
     conn = connect_rw()
     try:
-        conn.executescript(ddl)
+        # Split on ';' and execute each non-empty statement individually
+        # (psycopg3 does not have executescript like sqlite3).
+        statements = [s.strip() for s in ddl.split(";") if s.strip()]
+        with conn.transaction():
+            for stmt in statements:
+                conn.execute(stmt)
         _apply_migrations(conn)
         conn.commit()
     finally:
         conn.close()
 
 
-# Idempotent ALTER TABLE migrations. `CREATE TABLE IF NOT EXISTS` in schema.sql
-# does NOT add new columns to a pre-existing table, so any new column added
-# after the first deployment must be applied here. Each entry checks the
-# current table info and only runs the ALTER when the column is missing.
+# ---------------------------------------------------------------------------
+# Idempotent column migrations
+# ---------------------------------------------------------------------------
+
 _MIGRATIONS: list[tuple[str, str, str]] = [
     # (table, column, ALTER statement)
     ("festivals", "scope_traditions",
@@ -69,9 +83,7 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
      "ALTER TABLE zodiac_signs ADD COLUMN aspects_of_life TEXT"),
     ("zodiac_signs", "twelve_houses",
      "ALTER TABLE zodiac_signs ADD COLUMN twelve_houses TEXT"),
-    # LLM cleaning layer — tracks which rows have been LLM-cleaned.
-    # NULL  = not yet cleaned (or force-reset for re-clean).
-    # TEXT  = ISO datetime of last successful LLM clean.
+    # LLM cleaning layer
     ("festival_content", "llm_cleaned_at",
      "ALTER TABLE festival_content ADD COLUMN llm_cleaned_at TEXT"),
     ("muhurat_content", "llm_cleaned_at",
@@ -83,40 +95,17 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
 ]
 
 
-
-def _apply_migrations(conn: sqlite3.Connection) -> None:
+def _apply_migrations(conn: psycopg.Connection) -> None:
     for table, column, ddl_stmt in _MIGRATIONS:
-        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
-        if column not in cols:
-            conn.execute(ddl_stmt)
-    _drop_legacy_zodiac_signs(conn)
-
-
-def _drop_legacy_zodiac_signs(conn: sqlite3.Connection) -> None:
-    """The first iteration of zodiac_signs duplicated structural fields
-    (name, dates, lord, element, symbol) that now live in Python constants
-    in routers/reference.py. Drop the legacy table so the narrower
-    CREATE TABLE IF NOT EXISTS in schema.sql can take effect on next boot.
-    Safe: the table is only ever populated lazily by services/zodiac.py
-    and never read by anything outside that service.
-    """
-    cols = {r["name"] for r in conn.execute("PRAGMA table_info(zodiac_signs)")}
-    if not cols:
-        return  # table doesn't exist yet; nothing to do
-    if "name" in cols or "dates" in cols or "lord" in cols:
-        conn.execute("DROP TABLE zodiac_signs")
-        conn.executescript(
+        row = conn.execute(
             """
-            CREATE TABLE zodiac_signs (
-                id            TEXT NOT NULL,
-                language      TEXT NOT NULL,
-                summary       TEXT,
-                traits        TEXT,
-                love          TEXT,
-                compatibility TEXT,
-                source_url    TEXT NOT NULL,
-                scraped_at    TEXT NOT NULL DEFAULT (datetime('now')),
-                PRIMARY KEY (id, language)
-            );
-            """
-        )
+            SELECT 1 FROM information_schema.columns
+             WHERE table_name = %s AND column_name = %s
+            """,
+            (table, column),
+        ).fetchone()
+        if row is None:
+            try:
+                conn.execute(ddl_stmt)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Migration skipped (%s.%s): %s", table, column, exc)

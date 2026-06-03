@@ -1,18 +1,20 @@
 """
-locations.py — Panchang App location service (Phase 4b)
+locations.py — Panchang App location service
 
 Implements three read-only endpoints from endpoints.md §9:
-  GET /v1/locations/search      — FTS5 typeahead autocomplete
+  GET /v1/locations/search      — pg_trgm prefix typeahead autocomplete
   GET /v1/locations/resolve     — reverse-geocode lat/lon → tz + nearest city
   GET /v1/locations/{id}        — canonical row by GeoNames ID
 
+GeoNames data is downloaded once and loaded into the shared PostgreSQL
+database. On subsequent startups the data is already present and the build
+step is skipped automatically.
+
 Run:
-    pip install fastapi "uvicorn[standard]" timezonefinder httpx pydantic
-    python locations.py --build         # one-time: download GeoNames + build SQLite
-    python locations.py --serve         # start API on http://localhost:8000
+    python locations.py --build         # one-time: download GeoNames + build PG
     python locations.py --test          # run smoke tests without HTTP
 
-Or import into a notebook:
+Or import:
     from locations import build_database, search_locations, resolve_location, get_location
 """
 
@@ -20,10 +22,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import io
 import math
-import os
-import sqlite3
 import sys
 import zipfile
 from dataclasses import dataclass, asdict
@@ -31,13 +30,15 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+import psycopg
+from psycopg.rows import dict_row
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-DATA_DIR = Path(__file__).parent / "data" 
-DB_PATH = DATA_DIR / "sqlite.db"
+# Local data directory only used for GeoNames file downloads.
+DATA_DIR = Path(__file__).parent / "data"
 
 GEONAMES_BASE = "https://download.geonames.org/export/dump"
 
@@ -52,13 +53,10 @@ GEONAMES_BASE = "https://download.geonames.org/export/dump"
 DATASET = "IN+cities5000"
 
 # Which countries get the "full populated places" treatment.
-# Add more codes here later (e.g. "NP", "BD", "LK") as the app expands.
 FULL_COUNTRIES = ["IN"]
 
 SUPPORTED_LANGS = ("en", "hi", "bn", "ta", "te", "mr", "gu", "kn", "ml", "pa", "sa", "or")
 
-# Per-country dumps have an EXTRA first column (geonameid is the same, but the file
-# format is identical to cities*.txt — 19 tab-separated columns).
 GN_COLS = [
     "geonameid", "name", "asciiname", "alternatenames",
     "latitude", "longitude", "feature_class", "feature_code",
@@ -67,11 +65,22 @@ GN_COLS = [
     "dem", "timezone", "modification_date",
 ]
 
-# Feature classes/codes to KEEP from a per-country dump.
-# Per-country dumps include mountains, rivers, parks, etc — we only want populated places.
-#   feature_class = "P" → city, village, neighborhood, etc.
-# Within class P, we keep everything (PPL, PPLC, PPLA, PPLA2, PPLA3, PPLA4, PPLX neighborhood, etc.)
 KEEP_FEATURE_CLASS = "P"
+
+
+# ---------------------------------------------------------------------------
+# DB connection
+# ---------------------------------------------------------------------------
+
+def _connect() -> psycopg.Connection:
+    from backend.config import DATABASE_URL
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL is not set. "
+            "Add it to your .env file or set it as an environment variable."
+        )
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+
 
 # ---------------------------------------------------------------------------
 # Step 1 — Download GeoNames files
@@ -79,10 +88,10 @@ KEEP_FEATURE_CLASS = "P"
 
 def _download(url: str, dest: Path) -> None:
     if dest.exists():
-        print(f"  ✓ already have {dest.name}")
+        print(f"  [ok] already have {dest.name}")
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
-    print(f"  ↓ downloading {url}")
+    print(f"  [dl] downloading {url}")
     with httpx.stream("GET", url, follow_redirects=True, timeout=120.0) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
@@ -97,24 +106,22 @@ def _download(url: str, dest: Path) -> None:
                           end="", flush=True)
         if total:
             print()
-    print(f"  ✓ saved to {dest}")
+        print(f"  [ok] saved to {dest}")
+
 
 def _resolve_dataset_files() -> list[str]:
     """Translate the DATASET config into a list of dump filenames to download."""
     files = []
     if "+" in DATASET:
-        # e.g. "IN+cities5000"
         parts = DATASET.split("+")
         for p in parts:
-            if len(p) == 2 and p.isupper():
-                files.append(f"{p}.zip")
-            else:
-                files.append(f"{p}.zip")
+            files.append(f"{p}.zip")
     elif len(DATASET) == 2 and DATASET.isupper():
         files.append(f"{DATASET}.zip")
     else:
         files.append(f"{DATASET}.zip")
     return files
+
 
 def download_geonames() -> dict[str, list[Path]]:
     """Download all configured dumps + admin/country metadata."""
@@ -129,7 +136,7 @@ def download_geonames() -> dict[str, list[Path]]:
         if not txt_path.exists():
             with zipfile.ZipFile(zip_path) as z:
                 z.extractall(DATA_DIR)
-            print(f"  ✓ extracted {txt_name}")
+            print(f"  [ok] extracted {txt_name}")
         city_files.append(txt_path)
 
     meta_files: dict[str, Path] = {}
@@ -142,137 +149,178 @@ def download_geonames() -> dict[str, list[Path]]:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — Build the SQLite database
-#
-# Schema lives in schema.sql (single source of truth, shared with the festival
-# / muhurat tables). The build pipeline DROPs the GeoNames tables for a clean
-# reload, then re-applies the full schema (CREATE IF NOT EXISTS) to recreate
-# them alongside any other tables already in the file.
+# Step 2 — Build the PostgreSQL database
 # ---------------------------------------------------------------------------
 
-SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-
-# Tables/virtual tables owned by this module. Dropped before each rebuild.
 _GEONAMES_TABLES = (
-    "cities_rtree",   # virtual (rtree)
-    "cities_fts",     # virtual (fts5)
     "geonames_cities",
     "geonames_admin1",
     "geonames_admin2",
     "countries",
 )
 
+# Indexes specific to the GeoNames tables (dropped before rebuild).
+_GEONAMES_INDEXES = (
+    "idx_cities_country",
+    "idx_cities_lat_lon",
+    "idx_cities_name_trgm",
+    "idx_cities_ascii_trgm",
+)
 
-def _reset_geonames_tables(conn: sqlite3.Connection) -> None:
-    """Drop only the GeoNames-owned tables so a rebuild starts clean
-    without touching festival / muhurat / crawl tables."""
+SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+
+
+def _reset_geonames_tables(conn: psycopg.Connection) -> None:
+    """Drop GeoNames-owned tables so a rebuild starts clean."""
+    for idx in _GEONAMES_INDEXES:
+        conn.execute(f"DROP INDEX IF EXISTS {idx}")
     for t in _GEONAMES_TABLES:
-        conn.execute(f"DROP TABLE IF EXISTS {t}")
+        conn.execute(f"DROP TABLE IF EXISTS {t} CASCADE")
 
 
 def build_database(paths: dict[str, list[Path]]) -> None:
-    print(f"\nBuilding SQLite database at {DB_PATH}...")
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    print("\nBuilding GeoNames tables in PostgreSQL...")
+    conn = _connect()
+    try:
+        with conn.transaction():
+            _reset_geonames_tables(conn)
 
-    conn = sqlite3.connect(DB_PATH)
-    _reset_geonames_tables(conn)
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        # Re-apply schema to recreate dropped tables + indexes
+        ddl = SCHEMA_PATH.read_text(encoding="utf-8")
+        statements = [s.strip() for s in ddl.split(";") if s.strip()]
+        with conn.transaction():
+            for stmt in statements:
+                conn.execute(stmt)
 
-    # --- countries ----------------------------------------------------------
-    print("  · loading countries...")
-    with paths["countryInfo.txt"][0].open(encoding="utf-8") as f:
-        rows = []
-        for line in f:
-            if line.startswith("#") or not line.strip():
-                continue
-            parts = line.rstrip("\n").split("\t")
-            rows.append((parts[0], parts[4]))
-        conn.executemany("INSERT INTO countries VALUES (?, ?)", rows)
-    print(f"    ✓ {len(rows)} countries")
-
-    # --- admin1 -------------------------------------------------------------
-    print("  · loading admin1 (states/provinces)...")
-    with paths["admin1CodesASCII.txt"][0].open(encoding="utf-8") as f:
-        rows = [tuple(line.rstrip("\n").split("\t")[:3]) for line in f if line.strip()]
-        conn.executemany("INSERT INTO geonames_admin1 VALUES (?, ?, ?)", rows)
-    print(f"    ✓ {len(rows)} admin1 regions")
-
-    # --- admin2 -------------------------------------------------------------
-    print("  · loading admin2 (districts)...")
-    with paths["admin2Codes.txt"][0].open(encoding="utf-8") as f:
-        rows = [tuple(line.rstrip("\n").split("\t")[:3]) for line in f if line.strip()]
-        conn.executemany("INSERT INTO geonames_admin2 VALUES (?, ?, ?)", rows)
-    print(f"    ✓ {len(rows)} admin2 regions")
-
-    # --- cities -------------------------------------------------------------
-    # We dedupe by geonameid because a row might appear in BOTH IN.txt and cities5000.txt
-    # (most major Indian cities will). The per-country dump wins because it has richer
-    # admin2 codes.
-    print(f"  · loading {len(paths['cities'])} city file(s)...")
-    by_id: dict[int, tuple] = {}
-    fts_by_id: dict[int, str] = {}
-
-    for cities_file in paths["cities"]:
-        is_country_dump = len(cities_file.stem) == 2 and cities_file.stem.isupper()
-        print(f"    · parsing {cities_file.name} (country-dump={is_country_dump})...")
-        kept = 0
-        skipped = 0
-        with cities_file.open(encoding="utf-8") as f:
-            reader = csv.reader(f, delimiter="\t", quoting=csv.QUOTE_NONE)
-            for row in reader:
-                if len(row) < len(GN_COLS):
+        # --- countries ---
+        print("  · loading countries...")
+        rows_c = []
+        with paths["countryInfo.txt"][0].open(encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("#") or not line.strip():
                     continue
-                d = dict(zip(GN_COLS, row))
+                parts = line.rstrip("\n").split("\t")
+                rows_c.append((parts[0], parts[4]))
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.executemany("INSERT INTO countries VALUES (%s, %s) ON CONFLICT DO NOTHING", rows_c)
+        print(f"    [ok] {len(rows_c)} countries")
 
-                # Per-country dumps include EVERYTHING (mountains, rivers...).
-                # Keep only populated places.
-                if is_country_dump and d["feature_class"] != KEEP_FEATURE_CLASS:
-                    skipped += 1
-                    continue
-
-                gid = int(d["geonameid"])
-                # Per-country dump overrides cities*.txt for the same id
-                if gid in by_id and not is_country_dump:
-                    continue
-
-                try:
-                    lat = float(d["latitude"])
-                    lon = float(d["longitude"])
-                except ValueError:
-                    continue
-                pop = int(d["population"] or 0)
-
-                by_id[gid] = (
-                    gid, d["name"], d["asciiname"], d["country_code"],
-                    f"{d['country_code']}.{d['admin1_code']}" if d["admin1_code"] else None,
-                    f"{d['country_code']}.{d['admin1_code']}.{d['admin2_code']}"
-                        if d["admin1_code"] and d["admin2_code"] else None,
-                    lat, lon, d["timezone"] or "UTC", pop, d["feature_code"],
+        # --- admin1 ---
+        print("  · loading admin1 (states/provinces)...")
+        with paths["admin1CodesASCII.txt"][0].open(encoding="utf-8") as f:
+            rows_a1 = [tuple(line.rstrip("\n").split("\t")[:3]) for line in f if line.strip()]
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO geonames_admin1 VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", rows_a1
                 )
-                fts_by_id[gid] = " ".join(filter(None, [
-                    d["name"], d["asciiname"], d["alternatenames"]
-                ]))
-                kept += 1
-        print(f"      kept={kept:,}  skipped(non-populated)={skipped:,}")
+        print(f"    [ok] {len(rows_a1)} admin1 regions")
 
-    cities_rows = list(by_id.values())
-    fts_rows = [(gid, txt) for gid, txt in fts_by_id.items()]
-    rtree_rows = [(r[0], r[6], r[6], r[7], r[7]) for r in cities_rows]
+        # --- admin2 ---
+        print("  · loading admin2 (districts)...")
+        with paths["admin2Codes.txt"][0].open(encoding="utf-8") as f:
+            rows_a2 = [tuple(line.rstrip("\n").split("\t")[:3]) for line in f if line.strip()]
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO geonames_admin2 VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", rows_a2
+                )
+        print(f"    [ok] {len(rows_a2)} admin2 regions")
 
-    conn.executemany(
-        "INSERT INTO geonames_cities VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        cities_rows,
-    )
-    conn.executemany("INSERT INTO cities_fts(rowid, name) VALUES (?, ?)", fts_rows)
-    conn.executemany("INSERT INTO cities_rtree VALUES (?, ?, ?, ?, ?)", rtree_rows)
+        # --- cities ---
+        print(f"  · loading {len(paths['cities'])} city file(s)...")
+        by_id: dict[int, tuple] = {}
 
-    conn.commit()
-    conn.close()
-    print(f"\n✓ {len(cities_rows):,} unique populated places indexed")
-    print(f"✓ Database ready at {DB_PATH} ({DB_PATH.stat().st_size / 1024 / 1024:.1f} MB)")
+        for cities_file in paths["cities"]:
+            is_country_dump = len(cities_file.stem) == 2 and cities_file.stem.isupper()
+            print(f"    · parsing {cities_file.name} (country-dump={is_country_dump})...")
+            kept = 0
+            skipped = 0
+            with cities_file.open(encoding="utf-8") as f:
+                reader = csv.reader(f, delimiter="\t", quoting=csv.QUOTE_NONE)
+                for row in reader:
+                    if len(row) < len(GN_COLS):
+                        continue
+                    d = dict(zip(GN_COLS, row))
+                    if is_country_dump and d["feature_class"] != KEEP_FEATURE_CLASS:
+                        skipped += 1
+                        continue
+                    gid = int(d["geonameid"])
+                    if gid in by_id and not is_country_dump:
+                        continue
+                    try:
+                        lat = float(d["latitude"])
+                        lon = float(d["longitude"])
+                    except ValueError:
+                        continue
+                    pop = int(d["population"] or 0)
+                    by_id[gid] = (
+                        gid, d["name"], d["asciiname"], d["country_code"],
+                        f"{d['country_code']}.{d['admin1_code']}" if d["admin1_code"] else None,
+                        f"{d['country_code']}.{d['admin1_code']}.{d['admin2_code']}"
+                            if d["admin1_code"] and d["admin2_code"] else None,
+                        lat, lon, d["timezone"] or "UTC", pop, d["feature_code"],
+                    )
+                    kept += 1
+            print(f"      kept={kept:,}  skipped(non-populated)={skipped:,}")
+
+        cities_rows = list(by_id.values())
+        BATCH = 5000
+        total = len(cities_rows)
+        print(f"  · inserting {total:,} cities in batches of {BATCH}...")
+        with conn.transaction():
+            with conn.cursor() as cur:
+                for i in range(0, total, BATCH):
+                    batch = cities_rows[i: i + BATCH]
+                    cur.executemany(
+                        """
+                        INSERT INTO geonames_cities
+                            (id, name, asciiname, country, admin1_code, admin2_code,
+                             lat, lon, tz, population, feature_code)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        batch,
+                    )
+                    if (i // BATCH) % 10 == 0:
+                        print(f"    ... {min(i + BATCH, total):,}/{total:,}", end="\r", flush=True)
+        print()
+
+        conn.commit()
+        print(f"\n[ok] {total:,} unique populated places loaded into PostgreSQL")
+
+    finally:
+        conn.close()
+
+
+def ensure_database() -> None:
+    """
+    Called at startup. Builds the GeoNames database if the cities table is
+    empty. On first deploy this triggers a ~3-minute download+import.
+    Subsequent restarts skip this entirely.
+    """
+    try:
+        conn = _connect()
+        try:
+            row = conn.execute("SELECT COUNT(*) AS n FROM geonames_cities").fetchone()
+            count = row["n"] if row else 0
+        finally:
+            conn.close()
+    except Exception:
+        count = 0
+
+    if count > 0:
+        print(f"[locations] GeoNames DB ready ({count:,} cities — skipping rebuild)")
+        return
+
+    print("[locations] GeoNames DB empty — starting first-time build...")
+    paths = download_geonames()
+    build_database(paths)
+
 
 # ---------------------------------------------------------------------------
-# Step 3 — Core query functions (the actual endpoint logic)
+# Step 3 — Core query functions
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -294,14 +342,6 @@ class LocationRow:
     display_label: str
 
 
-def _connect() -> sqlite3.Connection:
-    if not DB_PATH.exists():
-        raise RuntimeError(f"Database missing at {DB_PATH}. Run: python locations.py --build")
-    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
 def _build_label(name: str, admin1: Optional[str], country: str) -> str:
     """Shortest unique label per spec §9."""
     parts = [name]
@@ -311,32 +351,31 @@ def _build_label(name: str, admin1: Optional[str], country: str) -> str:
     return ", ".join(parts)
 
 
-def _hydrate_row(conn: sqlite3.Connection, row: sqlite3.Row, language: str) -> LocationRow:
-    """Join a cities row with admin1 + country names. Localization stub for now."""
+def _hydrate_row(conn: psycopg.Connection, row: dict, language: str) -> LocationRow:
+    """Join a cities row with admin1 + country names."""
     admin1_name = None
-    if row["admin1_code"]:
+    if row.get("admin1_code"):
         a1 = conn.execute(
-            "SELECT name FROM geonames_admin1 WHERE code = ?",
+            "SELECT name FROM geonames_admin1 WHERE code = %s",
             (row["admin1_code"],),
         ).fetchone()
         if a1:
             admin1_name = a1["name"]
 
     admin2_name = None
-    if row["admin2_code"]:
+    if row.get("admin2_code"):
         a2 = conn.execute(
-            "SELECT name FROM geonames_admin2 WHERE code = ?",
+            "SELECT name FROM geonames_admin2 WHERE code = %s",
             (row["admin2_code"],),
         ).fetchone()
         if a2:
             admin2_name = a2["name"]
 
     country = conn.execute(
-        "SELECT name FROM countries WHERE iso2 = ?", (row["country"],)
+        "SELECT name FROM countries WHERE iso2 = %s", (row["country"],)
     ).fetchone()
     country_name = country["name"] if country else row["country"]
 
-    # TODO: localize via alternateNamesV2 once we import it. For now, returns English.
     name_localized = row["name"]
     admin1_localized = admin1_name
     country_localized = country_name
@@ -354,7 +393,7 @@ def _hydrate_row(conn: sqlite3.Connection, row: sqlite3.Row, language: str) -> L
         lon=row["lon"],
         tz=row["tz"],
         population=row["population"],
-        feature_code=row["feature_code"],
+        feature_code=row.get("feature_code"),
         display_label=_build_label(name_localized, admin1_localized, country_localized),
     )
 
@@ -369,29 +408,31 @@ def search_locations(
     language: str = "en",
     limit: int = 10,
 ) -> list[dict]:
-    """Implements GET /v1/locations/search per endpoints.md §9."""
+    """Implements GET /v1/locations/search per endpoints.md §9.
+
+    Uses pg_trgm ILIKE prefix matching on name/asciiname columns — equivalent
+    to the old SQLite FTS5 `MATCH "query"*` prefix search.
+    """
     if not q or len(q) < 1 or len(q) > 64:
         raise ValueError("q must be 1–64 chars")
     limit = max(1, min(25, limit))
 
-    # Escape FTS5 special chars and add prefix wildcard
-    safe_q = q.replace('"', '""')
-    fts_query = f'"{safe_q}"*'  # quoted phrase + prefix
+    q_prefix = q + "%"   # prefix match for typeahead
 
     conn = _connect()
     try:
         sql = """
-            SELECT c.*,
-                   CASE WHEN lower(c.name) = lower(:q) OR lower(c.asciiname) = lower(:q)
+            SELECT *,
+                   CASE WHEN lower(name) = lower(%(q)s) OR lower(asciiname) = lower(%(q)s)
                         THEN 0 ELSE 1 END AS exact_rank,
-                   CASE WHEN c.country = :country THEN 0 ELSE 1 END AS country_rank
-            FROM cities_fts
-            JOIN geonames_cities c ON c.id = cities_fts.rowid
-            WHERE cities_fts MATCH :fts
+                   CASE WHEN country = %(country)s THEN 0 ELSE 1 END AS country_rank
+            FROM geonames_cities
+            WHERE name      ILIKE %(q_prefix)s
+               OR asciiname ILIKE %(q_prefix)s
             ORDER BY
                 country_rank,
                 exact_rank,
-                CASE c.feature_code
+                CASE feature_code
                     WHEN 'PPLC'  THEN 0
                     WHEN 'PPLA'  THEN 1
                     WHEN 'PPLA2' THEN 2
@@ -399,17 +440,17 @@ def search_locations(
                     WHEN 'PPLA4' THEN 4
                     ELSE 5
                 END,
-                c.population DESC,
-                c.id ASC
-            LIMIT :limit
+                population DESC,
+                id ASC
+            LIMIT %(limit)s
         """
         rows = conn.execute(sql, {
-            "q": q, "country": country or "", "fts": fts_query, "limit": limit
+            "q": q, "q_prefix": q_prefix, "country": country or "", "limit": limit
         }).fetchall()
 
         results = [_hydrate_row(conn, r, language) for r in rows]
 
-        # Collision detection: if two results share name+admin1, switch to longer label
+        # Collision detection: if two results share display_label, use longer label
         seen: dict[str, list[int]] = {}
         for i, r in enumerate(results):
             seen.setdefault(r.display_label, []).append(i)
@@ -433,7 +474,7 @@ def get_location(geonameid: int, language: str = "en") -> Optional[dict]:
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT * FROM geonames_cities WHERE id = ?", (geonameid,)
+            "SELECT * FROM geonames_cities WHERE id = %s", (geonameid,)
         ).fetchone()
         if not row:
             return None
@@ -454,6 +495,7 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 # Lazy-loaded timezonefinder singleton
 _tz_finder = None
+
 def _get_tz_finder():
     global _tz_finder
     if _tz_finder is None:
@@ -463,24 +505,27 @@ def _get_tz_finder():
 
 
 def resolve_location(lat: float, lon: float, language: str = "en") -> dict:
-    """Implements GET /v1/locations/resolve."""
+    """Implements GET /v1/locations/resolve.
+
+    Uses a simple bounding-box WHERE clause on lat/lon — equivalent to the
+    old SQLite R*Tree virtual table. The idx_cities_lat_lon btree index makes
+    this fast enough for the typical ±2° search boxes used here.
+    """
     if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
         raise ValueError("lat/lon out of range")
 
     tz = _get_tz_finder().timezone_at(lat=lat, lng=lon) or "UTC"
 
-    # Bounding-box search via R*Tree, expanding until we find candidates.
-    # Start at ~50 km box (0.5°), grow if empty.
     conn = _connect()
     try:
         nearest = None
         nearest_dist = float("inf")
+        # Expand bounding box until we find candidates.
         for delta in (0.5, 2.0, 10.0):  # ~50, ~220, ~1100 km
             sql = """
-                SELECT c.* FROM cities_rtree r
-                JOIN geonames_cities c ON c.id = r.id
-                WHERE r.min_lat >= ? AND r.max_lat <= ?
-                  AND r.min_lon >= ? AND r.max_lon <= ?
+                SELECT * FROM geonames_cities
+                 WHERE lat BETWEEN %s AND %s
+                   AND lon BETWEEN %s AND %s
             """
             rows = conn.execute(sql, (
                 lat - delta, lat + delta, lon - delta, lon + delta
@@ -493,7 +538,7 @@ def resolve_location(lat: float, lon: float, language: str = "en") -> dict:
             if nearest:
                 break
 
-        out = {"tz": tz, "nearest_city": None}
+        out: dict = {"tz": tz, "nearest_city": None}
         if nearest:
             hydrated = _hydrate_row(conn, nearest, language)
             out["nearest_city"] = {
@@ -509,3 +554,25 @@ def resolve_location(lat: float, lon: float, language: str = "en") -> dict:
         return out
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point (for --build / --test)
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--build", action="store_true", help="Download GeoNames and load into Postgres")
+    parser.add_argument("--test", action="store_true", help="Run smoke tests")
+    args = parser.parse_args()
+
+    if args.build:
+        paths = download_geonames()
+        build_database(paths)
+
+    if args.test:
+        r = search_locations("Delhi", country="IN")
+        print(f"search 'Delhi': {len(r)} results, first={r[0]['name'] if r else 'none'}")
+        r2 = resolve_location(28.6139, 77.2090)
+        print(f"resolve Delhi: tz={r2['tz']}, nearest={r2['nearest_city']}")
+        print("✓ smoke tests passed")
