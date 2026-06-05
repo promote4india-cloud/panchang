@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:panchang_app/constants/app_themes.dart';
 import 'package:panchang_app/features/festivals/presentation/festivals_screen.dart';
 import 'package:panchang_app/features/settings/presentation/settings_screen.dart';

@@ -67,6 +67,12 @@ CORS_ALLOW_ORIGINS: list[str] = [
     if o.strip()
 ]
 
+#: Optional regex for allowed origins (useful for localhost with dynamic ports).
+CORS_ALLOW_ORIGIN_REGEX: str | None = os.getenv(
+    "CORS_ALLOW_ORIGIN_REGEX",
+    r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+)
+
 # ---------------------------------------------------------------------------
 # Festival snapshot prewarming
 # ---------------------------------------------------------------------------

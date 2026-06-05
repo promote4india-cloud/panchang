@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import (
     CORS_ALLOW_ORIGINS,
+	CORS_ALLOW_ORIGIN_REGEX,
     FESTIVAL_SNAPSHOT_PREWARM_AYANAMSA,
     FESTIVAL_SNAPSHOT_PREWARM_ENABLED,
     FESTIVAL_SNAPSHOT_PREWARM_POINTS,
@@ -124,6 +125,7 @@ def _startup_prewarm() -> None:
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=CORS_ALLOW_ORIGINS,
+	allow_origin_regex=CORS_ALLOW_ORIGIN_REGEX,
 	allow_credentials=True,
 	allow_methods=["*"],
 	allow_headers=["*"],

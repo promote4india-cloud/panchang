@@ -300,12 +300,12 @@ def _content_payload(row) -> dict:
 def _fetch_festival_content(conn, festival_ids: list[str], language: str) -> dict[str, dict]:
     if not festival_ids:
         return {}
-    placeholders = ",".join(["?"] * len(festival_ids))
+    placeholders = ",".join(["%s"] * len(festival_ids))
     rows = conn.execute(
         f"""
         SELECT * FROM festival_content
          WHERE festival_id IN ({placeholders})
-           AND language = ?
+           AND language = %s
         """,
         (*festival_ids, language),
     ).fetchall()
@@ -313,7 +313,7 @@ def _fetch_festival_content(conn, festival_ids: list[str], language: str) -> dic
     if language != "en":
         missing = [fid for fid in festival_ids if fid not in content]
         if missing:
-            placeholders = ",".join(["?"] * len(missing))
+            placeholders = ",".join(["%s"] * len(missing))
             rows = conn.execute(
                 f"""
                 SELECT * FROM festival_content
@@ -330,13 +330,13 @@ def _fetch_festival_content(conn, festival_ids: list[str], language: str) -> dic
 def _fetch_festival_rituals(conn, festival_ids: list[str], language: str) -> dict[str, list[str]]:
     if not festival_ids:
         return {}
-    placeholders = ",".join(["?"] * len(festival_ids))
+    placeholders = ",".join(["%s"] * len(festival_ids))
     rows = conn.execute(
         f"""
         SELECT festival_id, text
           FROM festival_rituals
          WHERE festival_id IN ({placeholders})
-           AND language = ?
+           AND language = %s
          ORDER BY festival_id, position
         """,
         (*festival_ids, language),
@@ -350,13 +350,13 @@ def _fetch_festival_rituals(conn, festival_ids: list[str], language: str) -> dic
 def _fetch_festival_faqs(conn, festival_ids: list[str], language: str) -> dict[str, list[dict]]:
     if not festival_ids:
         return {}
-    placeholders = ",".join(["?"] * len(festival_ids))
+    placeholders = ",".join(["%s"] * len(festival_ids))
     rows = conn.execute(
         f"""
         SELECT festival_id, question, answer
           FROM festival_faqs
          WHERE festival_id IN ({placeholders})
-           AND language = ?
+           AND language = %s
          ORDER BY festival_id, position
         """,
         (*festival_ids, language),
@@ -577,7 +577,7 @@ def festival_dates(
     conn = connect_ro()
     try:
         root = conn.execute(
-            "SELECT id, slug_path FROM festivals WHERE id = ?", (festival_id,)
+            "SELECT id, slug_path FROM festivals WHERE id = %s", (festival_id,)
         ).fetchone()
         if not root:
             raise HTTPException(404, f"Unknown festival: {festival_id}")
@@ -585,7 +585,7 @@ def festival_dates(
         if include_children:
             prefix = root["slug_path"] + "/"
             for r in conn.execute(
-                "SELECT id FROM festivals WHERE slug_path LIKE ?", (prefix + "%",),
+                "SELECT id FROM festivals WHERE slug_path LIKE %s", (prefix + "%",),
             ).fetchall():
                 ids.add(r["id"])
     finally:
@@ -665,21 +665,21 @@ def festival_detail(
     conn = connect_ro()
     try:
         f = conn.execute(
-            "SELECT * FROM festivals WHERE id = ?", (festival_id,)
+            "SELECT * FROM festivals WHERE id = %s", (festival_id,)
         ).fetchone()
         if not f:
             raise HTTPException(404, f"Unknown festival: {festival_id}")
         c = conn.execute(
-            "SELECT * FROM festival_content WHERE festival_id = ? AND language = ?",
+            "SELECT * FROM festival_content WHERE festival_id = %s AND language = %s",
             (festival_id, language),
         ).fetchone() or conn.execute(
-            "SELECT * FROM festival_content WHERE festival_id = ? AND language = 'en'",
+            "SELECT * FROM festival_content WHERE festival_id = %s AND language = 'en'",
             (festival_id,),
         ).fetchone()
         rituals = [
             r["text"] for r in conn.execute(
                 """SELECT text FROM festival_rituals
-                   WHERE festival_id = ? AND language = ?
+                   WHERE festival_id = %s AND language = %s
                    ORDER BY position""",
                 (festival_id, language),
             ).fetchall()
@@ -688,7 +688,7 @@ def festival_detail(
             {"question": r["question"], "answer": r["answer"]}
             for r in conn.execute(
                 """SELECT question, answer FROM festival_faqs
-                   WHERE festival_id = ? AND language = ?
+                   WHERE festival_id = %s AND language = %s
                    ORDER BY position""",
                 (festival_id, language),
             ).fetchall()
