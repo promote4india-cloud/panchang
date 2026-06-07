@@ -792,64 +792,93 @@ NEW_FESTIVALS: dict[str, dict[str, Any]] = {
 
 
 
+
+
+# ---------------------------------------------------------------------------
+# Seed hash — stable fingerprint of RULES + SCOPES + NEW_FESTIVALS.
+# Stored in db_meta so we can skip the entire seed when nothing changed.
+# ---------------------------------------------------------------------------
+
+def _seed_hash() -> str:
+    """Return a stable SHA-256 hex digest of the current seed data."""
+    import hashlib, json
+    payload = json.dumps(
+        {
+            "rules":         {k: list(v) for k, v in RULES.items()},
+            "scopes":        SCOPES,
+            "new_festivals": NEW_FESTIVALS,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+_META_KEY = "seed_festival_rules_hash"
+
+
 def seed_festival_rules() -> dict[str, int]:
     """
-    Apply curated rules to the festivals table. Idempotent — UPDATEs only
-    rows whose id is in RULES and whose rule_type is currently NULL or
-    differs from the seed (so a manual override sticks until you remove it
-    from the row or change the seed).
-
-    Also writes `scope_traditions` from the SCOPES map. A festival id absent
-    from SCOPES gets NULL (universal). To clear an existing scope by hand,
-    UPDATE the row to NULL after removing the entry from SCOPES.
-
-    Inserts any festival id present in NEW_FESTIVALS but missing from the
-    `festivals` table (these are synthetic regional/sect festivals not
-    produced by the AstroSage scraper). Adds a minimal English row to
-    `festival_content` so listings have a display name.
+    Apply curated rules to the festivals table. Idempotent — skipped entirely
+    when RULES / SCOPES / NEW_FESTIVALS haven't changed since the last run
+    (hash stored in db_meta).  When a seed IS required, all comparisons are
+    done in Python after two bulk SELECTs, so the total round-trips drop from
+    ~558 to ~5–10 regardless of how many festivals are in the catalog.
 
     Returns {'updated': n, 'unknown_ids': k, 'scope_updated': m,
-             'inserted': i}.
+             'inserted': i, 'skipped': bool}.
     """
     import json
 
     from .db import connect_rw
 
+    current_hash = _seed_hash()
     conn = connect_rw()
     try:
-        # ---- Insert any synthetic festivals not yet in the table -------
+        # ---- Hash guard: skip if nothing changed --------------------------
+        meta_row = conn.execute(
+            "SELECT value FROM db_meta WHERE key = %s", (_META_KEY,)
+        ).fetchone()
+        stored_hash = meta_row["value"] if meta_row else None
+
+        if stored_hash == current_hash:
+            print(f"[seed] Festival rules unchanged (hash={current_hash[:12]}…) — skipped", flush=True)
+            return {"updated": 0, "unknown_ids": 0, "total_seed": len(RULES),
+                    "scope_updated": 0, "inserted": 0, "skipped": True}
+
+        print(f"[seed] Festival rules changed — applying seed (hash={current_hash[:12]}…)", flush=True)
+
+        # ---- Bulk-fetch current state of all festivals -------------------
+        # One query gives us everything we need for rule + scope diffing.
+        rows = conn.execute(
+            "SELECT id, rule_type, rule_json, scope_traditions FROM festivals"
+        ).fetchall()
+        existing: dict[str, dict] = {r["id"]: dict(r) for r in rows}
+
+        # ---- Insert synthetic festivals not yet in the table -------------
         inserted = 0
         for fid, meta in NEW_FESTIVALS.items():
-            exists = conn.execute(
-                "SELECT 1 FROM festivals WHERE id = %s", (fid,)
-            ).fetchone()
-            if exists:
+            if fid in existing:
                 continue
             parent_id = meta.get("parent_id")
-            if parent_id:
-                parent_exists = conn.execute(
-                    "SELECT 1 FROM festivals WHERE id = %s", (parent_id,)
-                ).fetchone()
-                if not parent_exists:
-                    parent_slug = parent_id.replace(".", "/")
-                    conn.execute(
-                        """INSERT INTO festivals
-                               (id, parent_id, slug_path, kind, source_url)
-                               VALUES (%s, NULL, %s, 'festival', %s)
-                            ON CONFLICT(id) DO NOTHING""",
-                        (parent_id, parent_slug, "synthetic://internal"),
-                    )
+            if parent_id and parent_id not in existing:
+                parent_slug = parent_id.replace(".", "/")
+                conn.execute(
+                    """INSERT INTO festivals
+                           (id, parent_id, slug_path, kind, source_url)
+                           VALUES (%s, NULL, %s, 'festival', %s)
+                        ON CONFLICT(id) DO NOTHING""",
+                    (parent_id, parent_slug, "synthetic://internal"),
+                )
+                # Add to local cache so child INSERT sees the parent
+                existing[parent_id] = {"id": parent_id, "rule_type": None,
+                                       "rule_json": None, "scope_traditions": None}
             conn.execute(
                 """INSERT INTO festivals
                        (id, parent_id, slug_path, kind, type, source_url)
                        VALUES (%s, %s, %s, %s, %s, %s)""",
                 (
-                    fid,
-                    parent_id,
-                    meta["slug_path"],
-                    meta["kind"],
-                    meta.get("type"),
-                    "synthetic://internal",
+                    fid, parent_id, meta["slug_path"], meta["kind"],
+                    meta.get("type"), "synthetic://internal",
                 ),
             )
             conn.execute(
@@ -859,60 +888,66 @@ def seed_festival_rules() -> dict[str, int]:
                     ON CONFLICT(festival_id, language) DO NOTHING""",
                 (fid, meta["name"]),
             )
+            existing[fid] = {"id": fid, "rule_type": None,
+                             "rule_json": None, "scope_traditions": None}
             inserted += 1
 
-        existing_ids = {
-            r["id"] for r in conn.execute("SELECT id FROM festivals").fetchall()
-        }
-        updated = 0
+        # ---- Diff rules in Python, bulk-UPDATE only changed rows ---------
+        rule_updates: list[tuple] = []
+        scope_updates: list[tuple] = []
         unknown = 0
+
         for fid, (rtype, payload) in RULES.items():
-            if fid not in existing_ids:
+            if fid not in existing:
                 unknown += 1
                 continue
-            cur = conn.execute(
-                "SELECT rule_type, rule_json FROM festivals WHERE id = %s", (fid,)
-            ).fetchone()
+            cur = existing[fid]
             new_json = json.dumps(payload, sort_keys=True)
-            if cur["rule_type"] == rtype and cur["rule_json"] == new_json:
-                continue
+            if cur["rule_type"] != rtype or cur["rule_json"] != new_json:
+                rule_updates.append((rtype, new_json, fid))
+
+            new_scope = (
+                json.dumps(sorted(set(SCOPES[fid]))) if fid in SCOPES else None
+            )
+            if cur["scope_traditions"] != new_scope:
+                scope_updates.append((new_scope, fid))
+
+        # Execute only rows that actually changed
+        for rtype, new_json, fid in rule_updates:
             conn.execute(
                 """UPDATE festivals
                       SET rule_type = %s, rule_json = %s, updated_at = NOW()
                     WHERE id = %s""",
                 (rtype, new_json, fid),
             )
-            updated += 1
 
-        # Scope tags — apply for every seeded festival id (write NULL when
-        # the id is not in SCOPES so removing an entry reverts to universal).
-        scope_updated = 0
-        for fid in RULES:
-            if fid not in existing_ids:
-                continue
-            new_scope = (
-                json.dumps(sorted(set(SCOPES[fid]))) if fid in SCOPES else None
-            )
-            cur_row = conn.execute(
-                "SELECT scope_traditions FROM festivals WHERE id = %s", (fid,)
-            ).fetchone()
-            if cur_row["scope_traditions"] == new_scope:
-                continue
+        for new_scope, fid in scope_updates:
             conn.execute(
                 """UPDATE festivals
                       SET scope_traditions = %s, updated_at = NOW()
                     WHERE id = %s""",
                 (new_scope, fid),
             )
-            scope_updated += 1
+
+        # ---- Persist hash so next boot skips all the above ---------------
+        conn.execute(
+            """INSERT INTO db_meta (key, value) VALUES (%s, %s)
+               ON CONFLICT (key) DO UPDATE SET value = excluded.value""",
+            (_META_KEY, current_hash),
+        )
 
         conn.commit()
-        return {
-            "updated": updated,
+        result = {
+            "updated": len(rule_updates),
             "unknown_ids": unknown,
             "total_seed": len(RULES),
-            "scope_updated": scope_updated,
+            "scope_updated": len(scope_updates),
             "inserted": inserted,
+            "skipped": False,
         }
+        print(f"[seed] Done — {result}", flush=True)
+        return result
     finally:
         conn.close()
+
+
