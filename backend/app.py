@@ -23,6 +23,17 @@ except Exception:
     # Keep startup robust — don't crash if config import has issues
     import traceback
     traceback.print_exc()
+
+try:
+    from backend.config import ADMIN_API_KEY, USER_API_KEY
+    if not ADMIN_API_KEY:
+        print("[startup] WARNING: ADMIN_API_KEY is not set — admin endpoints are unprotected!")
+    if not USER_API_KEY:
+        print("[startup] WARNING: USER_API_KEY is not set — user endpoints are unprotected!")
+    if ADMIN_API_KEY and USER_API_KEY:
+        print("[startup] API auth: ADMIN_API_KEY and USER_API_KEY are configured.")
+except Exception:
+    pass
 sys.path.append(str(Path(__file__).parent.parent))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

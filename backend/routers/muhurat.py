@@ -10,15 +10,20 @@ from __future__ import annotations
 from datetime import date as Date, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
+from backend.auth import require_user
 from backend.services.muhurat import (
     compute_muhurat,
     compute_muhurat_by_id,
 )
 
-router = APIRouter(prefix="/v1/muhurat", tags=["muhurat"])
+router = APIRouter(
+    prefix="/v1/muhurat",
+    tags=["muhurat"],
+    dependencies=[Depends(require_user)],
+)
 
 
 # ---------------------------------------------------------------------------

@@ -16,8 +16,9 @@ from datetime import date as Date, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 
+from backend.auth import require_user
 from backend.services.cache import DEFAULT_CACHE_CONTROL
 from backend.services.horoscope import (
     PERIODS,
@@ -27,7 +28,11 @@ from backend.services.horoscope import (
 )
 from backend.services.zodiac import get_zodiac_sign
 
-router = APIRouter(prefix="/v1/horoscope", tags=["horoscope"])
+router = APIRouter(
+    prefix="/v1/horoscope",
+    tags=["horoscope"],
+    dependencies=[Depends(require_user)],
+)
 
 SignPath = Path(
     ...,

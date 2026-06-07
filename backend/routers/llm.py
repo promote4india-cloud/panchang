@@ -30,15 +30,20 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
+
+from backend.auth import require_admin
 
 from backend.services.content_cleaner import (
     RpmLimiter,
+    TARGET_LANGUAGES,
     clean_deepdive_batch,
     clean_festival_batch,
     clean_horoscope_batch,
     clean_muhurat_batch,
+    translate_festival_batch,
+    translate_muhurat_batch,
 )
 from backend.services.db import connect_ro, connect_rw
 from backend.services.llm import DEFAULT_MODEL, is_llm_enabled
@@ -79,7 +84,11 @@ def _cprint(level: str, job_id: str, msg: str) -> None:
         flush=True,
     )
 
-router = APIRouter(prefix="/v1/admin/llm", tags=["admin-llm"])
+router = APIRouter(
+    prefix="/v1/admin/llm",
+    tags=["admin-llm"],
+    dependencies=[Depends(require_admin)],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -259,14 +268,14 @@ def _make_festival_runner(req: LLMCleanRequest):
                 row["rituals"] = [
                     r["text"] for r in conn.execute(
                         "SELECT text FROM festival_rituals "
-                        "WHERE festival_id=? AND language=? ORDER BY position",
+                        "WHERE festival_id=%s AND language=%s ORDER BY position",
                         (row["festival_id"], row["language"]),
                     ).fetchall()
                 ]
                 row["faqs"] = [
                     [r["question"], r["answer"]] for r in conn.execute(
                         "SELECT question, answer FROM festival_faqs "
-                        "WHERE festival_id=? AND language=? ORDER BY position",
+                        "WHERE festival_id=%s AND language=%s ORDER BY position",
                         (row["festival_id"], row["language"]),
                     ).fetchall()
                 ]
@@ -758,6 +767,348 @@ def _make_deepdive_runner(req: LLMCleanRequest):
 
 
 # ---------------------------------------------------------------------------
+# Translation runners: English → 11 non-English languages
+# ---------------------------------------------------------------------------
+
+def _make_festival_translate_runner(req: LLMCleanRequest):
+    async def _run(job: LLMJob) -> None:
+        limiter = RpmLimiter(req.rpm_limit)
+
+        conn = connect_ro()
+        try:
+            sql = """
+                SELECT fc.festival_id, fc.language, fc.name, fc.subtitle,
+                       fc.about, fc.significance, fc.history,
+                       fc.scriptures, fc.puja_vidhi, fc.source_url
+                FROM festival_content fc
+                WHERE fc.language = 'en'
+                  AND (
+                    fc.about IS NOT NULL OR fc.significance IS NOT NULL OR
+                    fc.history IS NOT NULL OR fc.scriptures IS NOT NULL OR
+                    fc.puja_vidhi IS NOT NULL
+                  )
+            """
+            params: list[Any] = []
+            if not req.force:
+                # Only process festivals that have no non-English rows yet.
+                sql += """
+                  AND NOT EXISTS (
+                    SELECT 1 FROM festival_content fc2
+                    WHERE fc2.festival_id = fc.festival_id AND fc2.language != 'en'
+                  )
+                """
+            if req.limit:
+                sql += f" LIMIT {req.limit}"
+            rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+        finally:
+            conn.close()
+
+        job.counters["fetched"] = len(rows)
+        if not rows:
+            _cprint("WARN", job.id,
+                    "No English festival rows pending translation "
+                    f"(force={req.force}). Run clean/festivals first, "
+                    "or pass force=true to re-translate.")
+            return
+
+        _cprint("INFO", job.id,
+                f"Fetched {len(rows)} English festival rows → translating to "
+                f"{len(TARGET_LANGUAGES)} languages "
+                f"| batch_size={req.batch_size} rpm_limit={req.rpm_limit}")
+
+        # Attach English rituals and faqs as source content
+        for row in rows:
+            conn = connect_ro()
+            try:
+                row["rituals"] = [
+                    r["text"] for r in conn.execute(
+                        "SELECT text FROM festival_rituals "
+                        "WHERE festival_id=%s AND language='en' ORDER BY position",
+                        (row["festival_id"],),
+                    ).fetchall()
+                ]
+                row["faqs"] = [
+                    [r["question"], r["answer"]] for r in conn.execute(
+                        "SELECT question, answer FROM festival_faqs "
+                        "WHERE festival_id=%s AND language='en' ORDER BY position",
+                        (row["festival_id"],),
+                    ).fetchall()
+                ]
+            finally:
+                conn.close()
+
+        total_batches = (len(rows) + req.batch_size - 1) // req.batch_size
+
+        for batch_num, i in enumerate(range(0, len(rows), req.batch_size), start=1):
+            batch = rows[i: i + req.batch_size]
+            ids = ", ".join(r["festival_id"] for r in batch)
+            _cprint("INFO", job.id,
+                    f"Batch {batch_num}/{total_batches} "
+                    f"({len(batch)} records) → translating ... "
+                    f"{_DIM}[{ids}]{_RESET}")
+
+            await limiter.acquire()
+            translated = await translate_festival_batch(batch, model=DEFAULT_MODEL)
+
+            if translated is None:
+                job.counters["errors"] += len(batch)
+                _cprint("ERROR", job.id,
+                        f"Batch {batch_num}/{total_batches} FAILED (LLM error) — skipping")
+                continue
+
+            job.counters["cleaned"] += len(translated)
+            _cprint("OK", job.id,
+                    f"Batch {batch_num}/{total_batches} translated ({len(translated)} festivals)")
+
+            if req.dry_run:
+                job.counters["skipped"] += len(batch)
+                _cprint("WARN", job.id,
+                        f"dry_run=true — batch {batch_num} NOT written to DB")
+                continue
+
+            conn = connect_rw()
+            written_this_batch = 0
+            try:
+                for row in batch:
+                    fid = row["festival_id"]
+                    lang_map: dict = translated.get(fid, {})
+                    if not lang_map:
+                        _cprint("WARN", job.id,
+                                f"LLM returned no translations for festival_id={fid!r} — skipping")
+                        continue
+
+                    for lang, c in lang_map.items():
+                        if not isinstance(c, dict) or not c:
+                            continue
+
+                        conn.execute(
+                            """
+                            INSERT INTO festival_content
+                                (festival_id, language, name, subtitle, about,
+                                 significance, history, scriptures, puja_vidhi,
+                                 source_url, llm_cleaned_at)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                            ON CONFLICT (festival_id, language) DO UPDATE SET
+                                name        = excluded.name,
+                                subtitle    = excluded.subtitle,
+                                about       = excluded.about,
+                                significance= excluded.significance,
+                                history     = excluded.history,
+                                scriptures  = excluded.scriptures,
+                                puja_vidhi  = excluded.puja_vidhi,
+                                llm_cleaned_at = NOW()
+                            """,
+                            (
+                                fid, lang,
+                                c.get("name"), c.get("subtitle"), c.get("about"),
+                                c.get("significance"), c.get("history"),
+                                c.get("scriptures"), c.get("puja_vidhi"),
+                                row.get("source_url"),
+                            ),
+                        )
+
+                        if "rituals" in c and isinstance(c["rituals"], list):
+                            conn.execute(
+                                "DELETE FROM festival_rituals "
+                                "WHERE festival_id=%s AND language=%s", (fid, lang),
+                            )
+                            with conn.cursor() as _cur:
+                                _cur.executemany(
+                                    "INSERT INTO festival_rituals VALUES (%s,%s,%s,%s)",
+                                    [(fid, lang, pos, txt)
+                                     for pos, txt in enumerate(c["rituals"])],
+                                )
+
+                        if "faqs" in c and isinstance(c["faqs"], list):
+                            conn.execute(
+                                "DELETE FROM festival_faqs "
+                                "WHERE festival_id=%s AND language=%s", (fid, lang),
+                            )
+                            with conn.cursor() as _cur:
+                                _cur.executemany(
+                                    "INSERT INTO festival_faqs VALUES (%s,%s,%s,%s,%s)",
+                                    [(fid, lang, pos, qa[0], qa[1])
+                                     for pos, qa in enumerate(c["faqs"])
+                                     if isinstance(qa, (list, tuple)) and len(qa) == 2],
+                                )
+
+                        written_this_batch += 1
+
+                conn.commit()
+                job.counters["written"] += written_this_batch
+                _cprint("OK", job.id,
+                        f"Batch {batch_num}/{total_batches} written "
+                        f"({written_this_batch} language rows committed)")
+            finally:
+                conn.close()
+
+    return _run
+
+
+def _make_muhurat_translate_runner(req: LLMCleanRequest):
+    async def _run(job: LLMJob) -> None:
+        limiter = RpmLimiter(req.rpm_limit)
+
+        conn = connect_ro()
+        try:
+            sql = """
+                SELECT mc.muhurat_id, mc.language, mc.name, mc.description,
+                       mc.vedic_basis, mc.importance, mc.source_url
+                FROM muhurat_content mc
+                WHERE mc.language = 'en'
+            """
+            params: list[Any] = []
+            if not req.force:
+                sql += """
+                  AND NOT EXISTS (
+                    SELECT 1 FROM muhurat_content mc2
+                    WHERE mc2.muhurat_id = mc.muhurat_id AND mc2.language != 'en'
+                  )
+                """
+            if req.limit:
+                sql += f" LIMIT {req.limit}"
+            rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+        finally:
+            conn.close()
+
+        job.counters["fetched"] = len(rows)
+        if not rows:
+            _cprint("WARN", job.id,
+                    "No English muhurat rows pending translation "
+                    f"(force={req.force}). Run clean/muhurats first, "
+                    "or pass force=true to re-translate.")
+            return
+
+        _cprint("INFO", job.id,
+                f"Fetched {len(rows)} English muhurat rows → translating to "
+                f"{len(TARGET_LANGUAGES)} languages "
+                f"| batch_size={req.batch_size} rpm_limit={req.rpm_limit}")
+
+        for row in rows:
+            conn = connect_ro()
+            try:
+                row["subsections"] = [
+                    [r["heading"] or "", r["body"]] for r in conn.execute(
+                        "SELECT heading, body FROM muhurat_subsections "
+                        "WHERE muhurat_id=%s AND language='en' AND body IS NOT NULL ORDER BY position",
+                        (row["muhurat_id"],),
+                    ).fetchall()
+                ]
+                row["faqs"] = [
+                    [r["question"], r["answer"]] for r in conn.execute(
+                        "SELECT question, answer FROM muhurat_faqs "
+                        "WHERE muhurat_id=%s AND language='en' ORDER BY position",
+                        (row["muhurat_id"],),
+                    ).fetchall()
+                ]
+            finally:
+                conn.close()
+
+        total_batches = (len(rows) + req.batch_size - 1) // req.batch_size
+
+        for batch_num, i in enumerate(range(0, len(rows), req.batch_size), start=1):
+            batch = rows[i: i + req.batch_size]
+            ids = ", ".join(r["muhurat_id"] for r in batch)
+            _cprint("INFO", job.id,
+                    f"Batch {batch_num}/{total_batches} "
+                    f"({len(batch)} records) → translating ... "
+                    f"{_DIM}[{ids}]{_RESET}")
+
+            await limiter.acquire()
+            translated = await translate_muhurat_batch(batch, model=DEFAULT_MODEL)
+
+            if translated is None:
+                job.counters["errors"] += len(batch)
+                _cprint("ERROR", job.id,
+                        f"Batch {batch_num}/{total_batches} FAILED (LLM error) — skipping")
+                continue
+
+            job.counters["cleaned"] += len(translated)
+            _cprint("OK", job.id,
+                    f"Batch {batch_num}/{total_batches} translated ({len(translated)} muhurats)")
+
+            if req.dry_run:
+                job.counters["skipped"] += len(batch)
+                _cprint("WARN", job.id,
+                        f"dry_run=true — batch {batch_num} NOT written to DB")
+                continue
+
+            conn = connect_rw()
+            written_this_batch = 0
+            try:
+                for row in batch:
+                    mid = row["muhurat_id"]
+                    lang_map: dict = translated.get(mid, {})
+                    if not lang_map:
+                        _cprint("WARN", job.id,
+                                f"LLM returned no translations for muhurat_id={mid!r} — skipping")
+                        continue
+
+                    for lang, c in lang_map.items():
+                        if not isinstance(c, dict) or not c:
+                            continue
+
+                        conn.execute(
+                            """
+                            INSERT INTO muhurat_content
+                                (muhurat_id, language, name, description,
+                                 vedic_basis, importance, source_url, llm_cleaned_at)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
+                            ON CONFLICT (muhurat_id, language) DO UPDATE SET
+                                name        = excluded.name,
+                                description = excluded.description,
+                                vedic_basis = excluded.vedic_basis,
+                                importance  = excluded.importance,
+                                llm_cleaned_at = NOW()
+                            """,
+                            (
+                                mid, lang,
+                                c.get("name"), c.get("description"),
+                                c.get("vedic_basis"), c.get("importance"),
+                                row.get("source_url"),
+                            ),
+                        )
+
+                        if "subsections" in c and isinstance(c["subsections"], list):
+                            conn.execute(
+                                "DELETE FROM muhurat_subsections "
+                                "WHERE muhurat_id=%s AND language=%s", (mid, lang),
+                            )
+                            with conn.cursor() as _cur:
+                                _cur.executemany(
+                                    "INSERT INTO muhurat_subsections VALUES (%s,%s,%s,%s,%s)",
+                                    [(mid, lang, pos, ss[0], ss[1])
+                                     for pos, ss in enumerate(c["subsections"])
+                                     if isinstance(ss, (list, tuple)) and len(ss) == 2],
+                                )
+
+                        if "faqs" in c and isinstance(c["faqs"], list):
+                            conn.execute(
+                                "DELETE FROM muhurat_faqs "
+                                "WHERE muhurat_id=%s AND language=%s", (mid, lang),
+                            )
+                            with conn.cursor() as _cur:
+                                _cur.executemany(
+                                    "INSERT INTO muhurat_faqs VALUES (%s,%s,%s,%s,%s)",
+                                    [(mid, lang, pos, qa[0], qa[1])
+                                     for pos, qa in enumerate(c["faqs"])
+                                     if isinstance(qa, (list, tuple)) and len(qa) == 2],
+                                )
+
+                        written_this_batch += 1
+
+                conn.commit()
+                job.counters["written"] += written_this_batch
+                _cprint("OK", job.id,
+                        f"Batch {batch_num}/{total_batches} written "
+                        f"({written_this_batch} language rows committed)")
+            finally:
+                conn.close()
+
+    return _run
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -801,6 +1152,48 @@ async def clean_muhurats(req: LLMCleanRequest):
         model=LLM_MODEL,
         dry_run=req.dry_run,
         runner=_make_muhurat_runner(req),
+    )
+    return {"job_id": job.id, "status": job.status, **_job_summary(req)}
+
+
+@router.post("/translate/festivals")
+async def translate_festivals(req: LLMCleanRequest):
+    """
+    Translate cleaned English festival_content into all 11 non-English languages
+    (hi, bn, ta, te, mr, gu, kn, ml, pa, sa, or) in one LLM call per batch.
+
+    Prerequisites: run POST /clean/festivals first so English rows exist.
+    Recommended batch_size: 2-3 (output is 11x larger than a clean call).
+    force=true re-translates festivals that already have non-English rows.
+    """
+    _check_llm()
+    from backend.config import LLM_MODEL
+    job = LLMJobManager.start(
+        category="festival-translate",
+        model=LLM_MODEL,
+        dry_run=req.dry_run,
+        runner=_make_festival_translate_runner(req),
+    )
+    return {"job_id": job.id, "status": job.status, **_job_summary(req)}
+
+
+@router.post("/translate/muhurats")
+async def translate_muhurats(req: LLMCleanRequest):
+    """
+    Translate cleaned English muhurat_content into all 11 non-English languages
+    in one LLM call per batch.
+
+    Prerequisites: run POST /clean/muhurats first so English rows exist.
+    Recommended batch_size: 2-3.
+    force=true re-translates muhurats that already have non-English rows.
+    """
+    _check_llm()
+    from backend.config import LLM_MODEL
+    job = LLMJobManager.start(
+        category="muhurat-translate",
+        model=LLM_MODEL,
+        dry_run=req.dry_run,
+        runner=_make_muhurat_translate_runner(req),
     )
     return {"job_id": job.id, "status": job.status, **_job_summary(req)}
 

@@ -11,12 +11,17 @@ from __future__ import annotations
 from datetime import date as Date, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from backend.auth import require_user
 from backend.services.cache import DEFAULT_CACHE_CONTROL, ttl_cache
 from backend.services.panchang import compute_panchang, panchang_to_dict
 
-router = APIRouter(prefix="/v1/panchang", tags=["panchang"])
+router = APIRouter(
+    prefix="/v1/panchang",
+    tags=["panchang"],
+    dependencies=[Depends(require_user)],
+)
 
 
 # ---------------------------------------------------------------------------

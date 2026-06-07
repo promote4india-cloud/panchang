@@ -10,12 +10,17 @@ from dataclasses import asdict
 from datetime import date as Date, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from backend.auth import require_user
 from backend.services.cache import DEFAULT_CACHE_CONTROL, ttl_cache
 from backend.services.panchang import compute_sun_moon
 
-router = APIRouter(prefix="/v1/celestial", tags=["celestial"])
+router = APIRouter(
+    prefix="/v1/celestial",
+    tags=["celestial"],
+    dependencies=[Depends(require_user)],
+)
 
 LatQ = Query(..., ge=-90.0, le=90.0, description="Latitude in degrees")
 LonQ = Query(..., ge=-180.0, le=180.0, description="Longitude in degrees")

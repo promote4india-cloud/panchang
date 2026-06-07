@@ -30,7 +30,16 @@ from .llm import DEFAULT_MODEL, get_chat_model
 log = logging.getLogger("services.content_cleaner")
 
 # ---------------------------------------------------------------------------
-# System prompt shared across all categories
+# Supported languages
+# ---------------------------------------------------------------------------
+
+SUPPORTED_LANGUAGES: list[str] = [
+    "en", "hi", "bn", "ta", "te", "mr", "gu", "kn", "ml", "pa", "sa", "or",
+]
+TARGET_LANGUAGES: list[str] = [l for l in SUPPORTED_LANGUAGES if l != "en"]
+
+# ---------------------------------------------------------------------------
+# System prompts
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
@@ -45,6 +54,42 @@ Do NOT remove any factual detail. Keep the same language as the input.
 You will receive a JSON object where each key maps to a text field (or a list of strings, \
 or a list of [question, answer] pairs). Return a JSON object with the EXACT same keys and \
 structure but with cleaned/rephrased values. Do not add commentary, just return the JSON.\
+"""
+
+
+_TRANSLATION_SYSTEM_PROMPT = """\
+You are a professional translator specializing in Hindu festivals, muhurats, and Vedic astrology.
+
+You will receive a JSON object where each top-level key is a record ID and its value contains \
+English text fields (plain strings, lists of strings, or lists of [question, answer] pairs).
+
+Translate ALL text values from English into these 11 languages simultaneously:
+  hi (Hindi), bn (Bengali), ta (Tamil), te (Telugu), mr (Marathi),
+  gu (Gujarati), kn (Kannada), ml (Malayalam), pa (Punjabi), sa (Sanskrit), or (Odia)
+
+Translation rules:
+- Preserve the JSON structure exactly — same field names, same nesting, same list shapes
+- Festival/deity/Sanskrit proper nouns: render in the authentic native script \
+  (e.g. "Diwali" → "दीवाली" in Hindi, "திவாலி" in Tamil)
+- Keep the tone formal yet accessible, matching the cultural register of the input
+- Do NOT add or remove fields; do NOT add commentary outside the JSON
+
+Return ONLY a JSON object in this exact structure:
+{
+  "<record_id>": {
+    "hi": { <all fields from the input, translated to Hindi> },
+    "bn": { <translated to Bengali> },
+    "ta": { <translated to Tamil> },
+    "te": { <translated to Telugu> },
+    "mr": { <translated to Marathi> },
+    "gu": { <translated to Gujarati> },
+    "kn": { <translated to Kannada> },
+    "ml": { <translated to Malayalam> },
+    "pa": { <translated to Punjabi> },
+    "sa": { <translated to Sanskrit> },
+    "or": { <translated to Odia> }
+  }
+}\
 """
 
 
@@ -71,7 +116,12 @@ def _extract_json(text: str) -> dict[str, Any] | None:
         return None
 
 
-async def _call_llm(payload: dict[str, Any], model: str) -> dict[str, Any] | None:
+async def _call_llm(
+    payload: dict[str, Any],
+    model: str,
+    *,
+    system_prompt: str = _SYSTEM_PROMPT,
+) -> dict[str, Any] | None:
     """
     Send ``payload`` to the configured LangChain chat model and parse the
     JSON response.  Retries up to ``_MAX_RETRIES`` times on transient failures.
@@ -79,13 +129,15 @@ async def _call_llm(payload: dict[str, Any], model: str) -> dict[str, Any] | Non
 
     The ``model`` parameter is accepted for API compatibility but the actual
     model is determined by ``LLM_MODEL`` / ``init_chat_model`` at startup.
+    Pass ``system_prompt`` to override the default cleaning prompt (e.g. for
+    translation).
     """
     chat_model = get_chat_model()
     if chat_model is None:
         return None
 
     messages = [
-        SystemMessage(content=_SYSTEM_PROMPT),
+        SystemMessage(content=system_prompt),
         HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
     ]
 
@@ -217,6 +269,44 @@ async def clean_muhurat_batch(
     if not payload:
         return {}
     return await _call_llm(payload, model)
+
+
+# ---------------------------------------------------------------------------
+# Translation: English → all 11 non-English languages in one LLM call
+# ---------------------------------------------------------------------------
+
+async def translate_festival_batch(
+    en_rows: list[dict],
+    *,
+    model: str = DEFAULT_MODEL,
+) -> dict[str, dict[str, dict]] | None:
+    """
+    Translate a batch of cleaned English festival_content rows into all 11
+    non-English target languages in a single LLM call.
+
+    Returns {festival_id: {lang_code: {field: value}}} or None on failure.
+    """
+    payload = _build_festival_payload(en_rows)
+    if not payload:
+        return {}
+    return await _call_llm(payload, model, system_prompt=_TRANSLATION_SYSTEM_PROMPT)
+
+
+async def translate_muhurat_batch(
+    en_rows: list[dict],
+    *,
+    model: str = DEFAULT_MODEL,
+) -> dict[str, dict[str, dict]] | None:
+    """
+    Translate a batch of cleaned English muhurat_content rows into all 11
+    non-English target languages in a single LLM call.
+
+    Returns {muhurat_id: {lang_code: {field: value}}} or None on failure.
+    """
+    payload = _build_muhurat_payload(en_rows)
+    if not payload:
+        return {}
+    return await _call_llm(payload, model, system_prompt=_TRANSLATION_SYSTEM_PROMPT)
 
 
 # ---------------------------------------------------------------------------

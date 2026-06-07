@@ -46,7 +46,16 @@ class HoroscopeApiClient {
       path: '/v1/horoscope/${query.sign}',
       queryParameters: query.toQueryParams(),
     );
-    final response = await _client.get(uri).timeout(const Duration(seconds: 30));
+    final response = await _client
+        .get(uri, headers: AppConfig.authHeaders)
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw ApiException(
+        'Authentication failed (${response.statusCode}) — '
+        'check PANCHANG_USER_API_KEY build config.',
+        response.body,
+      );
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException('Request failed: ${response.statusCode}', response.body);
     }

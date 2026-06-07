@@ -11,8 +11,9 @@ Catalogs are pure constants, served with a long Cache-Control window.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 
+from backend.auth import require_user
 from backend.services.cache import DEFAULT_CACHE_CONTROL
 from backend.services.panchang import (
     NAKSHATRA_DEITIES,
@@ -28,7 +29,11 @@ from backend.services.zodiac import (
     zodiac_index,
 )
 
-router = APIRouter(prefix="/v1/reference", tags=["reference"])
+router = APIRouter(
+    prefix="/v1/reference",
+    tags=["reference"],
+    dependencies=[Depends(require_user)],
+)
 
 # Long-lived static data — week-long cache window.
 _STATIC_CACHE_CONTROL = "public, max-age=604800, stale-while-revalidate=2592000"
