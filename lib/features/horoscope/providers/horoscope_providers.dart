@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../config/user_config.dart';
 import '../../../assset/zodiac_icons.dart';
+import '../../../providers/app_providers.dart';
 import '../data/horoscope_api.dart';
 import '../models/horoscope_models.dart';
 
@@ -67,10 +68,11 @@ final horoscopeApiProvider = Provider<HoroscopeApiClient>((ref) {
 
 final horoscopeQueryProvider = Provider<HoroscopeQuery>((ref) {
   final state = ref.watch(horoscopeProvider);
+  final langCode = ref.watch(localeProvider).languageCode;
   return HoroscopeQuery(
     sign: _normalizeSign(state.selectedZodiac),
     period: _mapDurationToPeriod(state.activeDuration),
-    language: UserConfig.language,
+    language: langCode,
     tz: UserConfig.timezone,
   );
 });

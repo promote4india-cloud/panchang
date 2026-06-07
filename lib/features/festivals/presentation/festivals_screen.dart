@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:panchang_app/l10n/app_localizations.dart';
 
 import '../../../constants/app_colors.dart';
 import '../../../constants/app_themes.dart';
@@ -18,6 +19,7 @@ class FestivalsView extends ConsumerWidget {
     final isDesktop = screenWidth > 768;
     final isCompactHeader = screenWidth < 560;
     final c = AppColorsOf(context);
+    final l = AppLocalizations.of(context)!;
 
     final calendar = ref.watch(festivalsCalendarProvider);
 
@@ -60,7 +62,7 @@ class FestivalsView extends ConsumerWidget {
                       children: [
                         _buildSelectorStepper(
                           context,
-                          value: _monthName(vm.month),
+                          value: _monthName(context, vm.month),
                           onPrevious: () {
                             ref
                                 .read(festivalMonthProvider.notifier)
@@ -131,16 +133,16 @@ class FestivalsView extends ConsumerWidget {
 
             // --- Fixed: Mobile Responsive List Alternative View to replace table ---
             Text(
-              'Full Calendar View',
+              l.featuredFestivals,
               style: AppThemes.headlineMd.copyWith(
                 color: c.onSurface,
-                fontSize: 20,
+                fontSize: 18,
               ),
             ),
             const SizedBox(height: 12),
             if (vm.events.isEmpty)
               Text(
-                'No festivals listed for this month.',
+                l.noFestivalsThisMonth,
                 style: AppThemes.bodyMd.copyWith(
                   color: c.onSurfaceVariant,
                 ),
@@ -154,10 +156,10 @@ class FestivalsView extends ConsumerWidget {
                   final event = vm.events[index];
                   return _buildResponsiveCalendarRow(
                     context,
-                    _formatEventDate(event.date),
+                    _formatEventDate(context, event.date),
                     event.weekday,
                     _displayEventName(event),
-                    _eventTypeLabel(event.type),
+                    _eventTypeLabel(context, event.type),
                     c.primaryContainer,
                     onTap: () => _openFestivalDetail(context, vm.events, index),
                   );
@@ -174,7 +176,7 @@ class FestivalsView extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Unable to load festivals.',
+              l.unableToLoadFestivals,
               style: AppThemes.bodyMd.copyWith(
                 color: c.onSurfaceVariant,
               ),
@@ -182,7 +184,7 @@ class FestivalsView extends ConsumerWidget {
             const SizedBox(height: 12),
             TextButton(
               onPressed: () => ref.refresh(festivalsCalendarProvider),
-              child: const Text('Retry'),
+              child: Text(l.retry),
             ),
           ],
         ),
@@ -251,6 +253,7 @@ class FestivalsView extends ConsumerWidget {
     FestivalsCalendarVm vm,
   ) {
     final c = AppColorsOf(context);
+    final l = AppLocalizations.of(context)!;
     final startWeekday = DateTime(vm.year, vm.month, 1).weekday;
     final leadingEmpty = startWeekday % 7;
     final totalDays = vm.days.length;
@@ -298,7 +301,10 @@ class FestivalsView extends ConsumerWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                for (final day in ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'])
+                for (final day in [
+                  l.daySunShort, l.dayMonShort, l.dayTueShort, l.dayWedShort,
+                  l.dayThuShort, l.dayFriShort, l.daySatShort,
+                ])
                   Expanded(
                     child: Text(
                       day,
@@ -425,7 +431,7 @@ class FestivalsView extends ConsumerWidget {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: Text(' ${_formatFullDate(date)}'),
+          title: Text(' ${_formatFullDate(context, date)}'),
           content: SizedBox(
             width: double.maxFinite,
             child: ListView.separated(
@@ -464,7 +470,7 @@ class FestivalsView extends ConsumerWidget {
                 foregroundColor: c.primaryContainer,
               ),
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Close'),
+              child: Text(AppLocalizations.of(context)!.close),
             ),
           ],
         );
@@ -479,17 +485,18 @@ class FestivalsView extends ConsumerWidget {
     return '$firstName +${events.length - 1}';
   }
 
-  String _formatEventDate(DateTime date) {
+  String _formatEventDate(BuildContext context, DateTime date) {
+    final l = AppLocalizations.of(context)!;
     final day = date.day.toString().padLeft(2, '0');
-    return '${_monthShort(date.month)} $day, ${_weekdayShort(date.weekday)}';
+    return '${_monthShort(l, date.month)} $day, ${_weekdayShort(l, date.weekday)}';
   }
 
-  String _formatFeaturedDate(DateTime date) {
-    return '${_monthName(date.month)} ${date.day}';
+  String _formatFeaturedDate(BuildContext context, DateTime date) {
+    return '${_monthName(context, date.month)} ${date.day}';
   }
 
-  String _eventTypeLabel(String? type) {
-    if (type == null || type.trim().isEmpty) return 'FESTIVAL';
+  String _eventTypeLabel(BuildContext context, String? type) {
+    if (type == null || type.trim().isEmpty) return AppLocalizations.of(context)!.festival.toUpperCase();
     return type.trim().toUpperCase();
   }
 
@@ -523,49 +530,35 @@ class FestivalsView extends ConsumerWidget {
     return lower[0].toUpperCase() + lower.substring(1);
   }
 
-  String _monthShort(int month) {
-    const months = [
-      'JAN',
-      'FEB',
-      'MAR',
-      'APR',
-      'MAY',
-      'JUN',
-      'JUL',
-      'AUG',
-      'SEP',
-      'OCT',
-      'NOV',
-      'DEC',
-    ];
-    return months[(month - 1).clamp(0, 11)];
+  String _monthShort(AppLocalizations l, int month) {
+    final idx = (month - 1).clamp(0, 11);
+    return [
+      l.monthJanShort, l.monthFebShort, l.monthMarShort, l.monthAprShort,
+      l.monthMayShort, l.monthJunShort, l.monthJulShort, l.monthAugShort,
+      l.monthSepShort, l.monthOctShort, l.monthNovShort, l.monthDecShort,
+    ][idx];
   }
 
-  String _monthName(int month) {
-    const months = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
-    ];
-    return months[(month - 1).clamp(0, 11)];
+  String _monthName(BuildContext context, int month) {
+    final l = AppLocalizations.of(context)!;
+    final idx = (month - 1).clamp(0, 11);
+    return [
+      l.monthJanFull, l.monthFebFull, l.monthMarFull, l.monthAprFull,
+      l.monthMayFull, l.monthJunFull, l.monthJulFull, l.monthAugFull,
+      l.monthSepFull, l.monthOctFull, l.monthNovFull, l.monthDecFull,
+    ][idx];
   }
 
-  String _weekdayShort(int weekday) {
-    const weekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-    return weekdays[(weekday - 1).clamp(0, 6)];
+  String _weekdayShort(AppLocalizations l, int weekday) {
+    final idx = (weekday - 1).clamp(0, 6);
+    return [
+      l.dayMonFull, l.dayTueFull, l.dayWedFull, l.dayThuFull,
+      l.dayFriFull, l.daySatFull, l.daySunFull,
+    ][idx];
   }
 
-  String _formatFullDate(DateTime date) {
-    return '${_monthName(date.month)} ${date.day}, ${date.year}';
+  String _formatFullDate(BuildContext context, DateTime date) {
+    return '${_monthName(context, date.month)} ${date.day}, ${date.year}';
   }
 
   List<FestivalCalendarEventVm> _featuredEvents(
@@ -598,8 +591,8 @@ class FestivalsView extends ConsumerWidget {
       items.add(
         _buildFeaturedFestivalItem(
           context,
-          _formatFeaturedDate(featuredEvents[i].date),
-          _eventTypeLabel(featuredEvents[i].type),
+          _formatFeaturedDate(context, featuredEvents[i].date),
+          _eventTypeLabel(context, featuredEvents[i].type),
           _displayEventName(featuredEvents[i]),
           onTap: targetIndex < 0
               ? null
@@ -643,7 +636,7 @@ class FestivalsView extends ConsumerWidget {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'Featured Festivals',
+                      AppLocalizations.of(context)!.featuredFestivals,
                       style: AppThemes.headlineMd.copyWith(
                         color: c.onSurface,
                         fontSize: 18,
