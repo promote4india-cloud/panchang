@@ -366,17 +366,17 @@ async def crawl(
     force: bool = Query(False, description="Re-fetch even if cached row is fresh."),
     limit: int | None = Query(None, ge=1, description="Cap pages fetched per scope."),
     resume: bool = Query(False, description="Pick up pending/failed tasks from previous runs."),
-    auto_clean: bool = Query(False, description="Auto-run LLM clean after crawl completes."),
-    auto_translate: bool = Query(False, description="Auto-run LLM translate after clean completes."),
+    auto_clean: bool = Query(True, description="Auto-run LLM clean after crawl completes."),
+    auto_translate: bool = Query(True, description="Auto-run LLM translate after clean completes."),
 ):
     """
     Kick off a background crawl. Returns immediately with a job_id;
     poll GET /v1/admin/scrape/jobs/{job_id} for progress, or POST
     .../cancel to stop it. Only one crawl runs at a time (HTTP 409 otherwise).
 
-    Set auto_clean=true to automatically start LLM cleaning once the crawl
-    finishes. Set auto_translate=true (implies auto_clean) to also run
-    translation into all 11 non-English languages after cleaning.
+    auto_clean and auto_translate both default to true — the full pipeline
+    (crawl → LLM clean → translate into 11 languages) runs automatically.
+    Pass auto_clean=false to crawl only; auto_translate=false to crawl + clean only.
     """
     return _start_crawl(scope="all", language=language, force=force,
                         limit=limit, resume=resume,
@@ -390,8 +390,8 @@ async def crawl_festivals_only(
     force: bool = Query(False),
     limit: int | None = Query(None, ge=1),
     resume: bool = Query(False),
-    auto_clean: bool = Query(False, description="Auto-run LLM clean after crawl completes."),
-    auto_translate: bool = Query(False, description="Auto-run LLM translate after clean completes."),
+    auto_clean: bool = Query(True, description="Auto-run LLM clean after crawl completes."),
+    auto_translate: bool = Query(True, description="Auto-run LLM translate after clean completes."),
 ):
     return _start_crawl(scope="festivals", language=language, force=force,
                         limit=limit, resume=resume,
@@ -405,8 +405,8 @@ async def crawl_muhurats_only(
     force: bool = Query(False),
     limit: int | None = Query(None, ge=1),
     resume: bool = Query(False),
-    auto_clean: bool = Query(False, description="Auto-run LLM clean after crawl completes."),
-    auto_translate: bool = Query(False, description="Auto-run LLM translate after clean completes."),
+    auto_clean: bool = Query(True, description="Auto-run LLM clean after crawl completes."),
+    auto_translate: bool = Query(True, description="Auto-run LLM translate after clean completes."),
 ):
     return _start_crawl(scope="muhurats", language=language, force=force,
                         limit=limit, resume=resume,
@@ -528,7 +528,7 @@ async def prewarm_horoscope(
     language: str = Query("en"),
     force: bool = Query(False, description="Re-fetch even if already cached."),
     auto_clean: bool = Query(
-        False,
+        True,
         description="Run LLM clean/horoscope after all pages are fetched.",
     ),
     auto_deepdive: bool = Query(
