@@ -260,3 +260,47 @@ async def get_horoscope(
     if parsed.sign_deepdive is not None:
         _upsert_deepdive(parsed.sign_deepdive)
     return _select(sign, period, language, key)
+
+
+# ---------------------------------------------------------------------------
+# Stale-row cleanup
+# ---------------------------------------------------------------------------
+
+def cleanup_stale_horoscopes(tz: str = "Asia/Kolkata") -> dict:
+    """Delete horoscope_predictions rows whose period_key is before the
+    current calendar window for that period type.
+
+    Period-key formats and stale condition:
+      daily / tomorrow  → YYYY-MM-DD  < today  /  < tomorrow
+      weekly / w_love   → YYYY-Wnn    < current ISO week
+      monthly / n_month → YYYY-MM     < current month  /  < next month
+      yearly            → YYYY        < current year
+    """
+    today = datetime.now(ZoneInfo(tz)).date()
+    tomorrow = today + timedelta(days=1)
+    iso_year, iso_week, _ = today.isocalendar()
+
+    cutoffs: dict[str, str] = {
+        "daily":       today.isoformat(),
+        "tomorrow":    tomorrow.isoformat(),
+        "weekly":      f"{iso_year:04d}-W{iso_week:02d}",
+        "weekly_love": f"{iso_year:04d}-W{iso_week:02d}",
+        "monthly":     f"{today.year:04d}-{today.month:02d}",
+        "next_month":  f"{_add_months(today, 1).year:04d}-{_add_months(today, 1).month:02d}",
+        "yearly":      f"{today.year:04d}",
+    }
+
+    total_deleted = 0
+    conn = connect_rw()
+    try:
+        for period, cutoff in cutoffs.items():
+            cur = conn.execute(
+                "DELETE FROM horoscope_predictions WHERE period=%s AND period_key<%s",
+                (period, cutoff),
+            )
+            total_deleted += cur.rowcount or 0
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"deleted": total_deleted, "tz": tz, "cutoffs": cutoffs}

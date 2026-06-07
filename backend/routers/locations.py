@@ -1,15 +1,21 @@
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
-from backend.services.locations import (
-    ensure_database,
-    search_locations,
-    resolve_location,
-    get_location,
-)
 from typing import Optional
 
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 
-router = APIRouter(prefix="/v1/locations", tags=["locations"])
+from backend.auth import require_user
+from backend.services.locations import (
+    ensure_database,
+    get_location,
+    resolve_location,
+    search_locations,
+)
+
+router = APIRouter(
+    prefix="/v1/locations",
+    tags=["locations"],
+    dependencies=[Depends(require_user)],
+)
 
 
 @router.get("/search")

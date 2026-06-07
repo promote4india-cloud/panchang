@@ -18,10 +18,12 @@ unix-socket / VPN in production. For now they are open in dev.
 
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.auth import require_admin
 from backend.services.db import connect_rw, async_db
 from backend.services.scraper import fetch_page, get_parser
 from backend.services.scraper.registry import (
@@ -30,7 +32,11 @@ from backend.services.scraper.registry import (
     classify_url,
 )
 
-router = APIRouter(prefix="/v1/admin/scrape", tags=["admin-scraper"])
+router = APIRouter(
+    prefix="/v1/admin/scrape",
+    tags=["admin-scraper"],
+    dependencies=[Depends(require_admin)],
+)
 
 ASTROSAGE_HOST = "panchang.astrosage.com"
 
@@ -230,8 +236,108 @@ async def scrape_muhurat(slug: str, language: str = "en", force: bool = False):
 # Only ONE crawl runs at a time (enforced by JobManager).
 # -------------------------------------------------------------------------
 
-def _start_crawl(*, scope: str, language: str, force: bool,
-                 limit: int | None, resume: bool) -> dict:
+async def _chain_after_crawl(
+    crawl_job,
+    scope: str,
+    auto_clean: bool,
+    auto_translate: bool,
+) -> None:
+    """
+    Background task: waits for the crawl to finish, then runs LLM clean and/or
+    translate phases sequentially (to keep rate-limit pressure predictable).
+    Only proceeds if the crawl completed successfully.
+    """
+    if crawl_job.task is not None:
+        try:
+            await crawl_job.task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    if crawl_job.status != "completed":
+        print(
+            f"[chain] crawl {crawl_job.id[:8]} ended with "
+            f"status={crawl_job.status!r} — skipping LLM chain",
+            flush=True,
+        )
+        return
+
+    print(
+        f"[chain] crawl {crawl_job.id[:8]} done — "
+        f"starting pipeline (clean={auto_clean} translate={auto_translate})",
+        flush=True,
+    )
+
+    # Lazy imports to avoid circular dependency at module load time.
+    from backend.routers.llm import (
+        LLMJobManager,
+        LLMCleanRequest,
+        _make_festival_runner,
+        _make_muhurat_runner,
+        _make_festival_translate_runner,
+        _make_muhurat_translate_runner,
+    )
+    from backend.services.llm import DEFAULT_MODEL, is_llm_enabled
+
+    if not is_llm_enabled():
+        print("[chain] LLM not configured — skipping clean/translate phases", flush=True)
+        return
+
+    clean_req = LLMCleanRequest()                    # batch_size=10 is fine for cleaning
+    translate_req = LLMCleanRequest(batch_size=3)    # 11 languages × 10 festivals = huge output
+
+    if auto_clean:
+        print("[chain] Phase 1/2: LLM clean", flush=True)
+        if scope in ("all", "festivals"):
+            fj = LLMJobManager.start(
+                category="festivals", model=DEFAULT_MODEL, dry_run=False,
+                runner=_make_festival_runner(clean_req),
+            )
+            if fj.task:
+                await asyncio.shield(fj.task)
+            print(f"[chain] festivals clean done (status={fj.status})", flush=True)
+
+        if scope in ("all", "muhurats"):
+            mj = LLMJobManager.start(
+                category="muhurats", model=DEFAULT_MODEL, dry_run=False,
+                runner=_make_muhurat_runner(clean_req),
+            )
+            if mj.task:
+                await asyncio.shield(mj.task)
+            print(f"[chain] muhurats clean done (status={mj.status})", flush=True)
+
+    if auto_translate:
+        print("[chain] Phase 2/2: LLM translate", flush=True)
+        if scope in ("all", "festivals"):
+            ftj = LLMJobManager.start(
+                category="festival-translate", model=DEFAULT_MODEL, dry_run=False,
+                runner=_make_festival_translate_runner(translate_req),
+            )
+            if ftj.task:
+                await asyncio.shield(ftj.task)
+            print(f"[chain] festivals translate done (status={ftj.status})", flush=True)
+
+        if scope in ("all", "muhurats"):
+            mtj = LLMJobManager.start(
+                category="muhurat-translate", model=DEFAULT_MODEL, dry_run=False,
+                runner=_make_muhurat_translate_runner(translate_req),
+            )
+            if mtj.task:
+                await asyncio.shield(mtj.task)
+            print(f"[chain] muhurats translate done (status={mtj.status})", flush=True)
+
+    print(f"[chain] pipeline complete for crawl {crawl_job.id[:8]}", flush=True)
+
+
+def _start_crawl(
+    *,
+    scope: str,
+    language: str,
+    force: bool,
+    limit: int | None,
+    resume: bool,
+    auto_clean: bool = False,
+    auto_translate: bool = False,
+) -> dict:
     # Trigger parser registration before the orchestrator runs.
     from backend.services.scraper import parsers as _parsers  # noqa: F401
     from backend.services.scraper.jobs import JobManager
@@ -244,7 +350,14 @@ def _start_crawl(*, scope: str, language: str, force: bool,
         )
     except RuntimeError as e:
         raise HTTPException(409, str(e))
-    return job.to_dict()
+
+    if auto_clean or auto_translate:
+        asyncio.create_task(_chain_after_crawl(job, scope, auto_clean, auto_translate))
+
+    out = job.to_dict()
+    if auto_clean or auto_translate:
+        out["auto_chain"] = {"clean": auto_clean, "translate": auto_translate}
+    return out
 
 
 @router.post("/crawl")
@@ -253,14 +366,22 @@ async def crawl(
     force: bool = Query(False, description="Re-fetch even if cached row is fresh."),
     limit: int | None = Query(None, ge=1, description="Cap pages fetched per scope."),
     resume: bool = Query(False, description="Pick up pending/failed tasks from previous runs."),
+    auto_clean: bool = Query(True, description="Auto-run LLM clean after crawl completes."),
+    auto_translate: bool = Query(True, description="Auto-run LLM translate after clean completes."),
 ):
     """
     Kick off a background crawl. Returns immediately with a job_id;
     poll GET /v1/admin/scrape/jobs/{job_id} for progress, or POST
     .../cancel to stop it. Only one crawl runs at a time (HTTP 409 otherwise).
+
+    auto_clean and auto_translate both default to true — the full pipeline
+    (crawl → LLM clean → translate into 11 languages) runs automatically.
+    Pass auto_clean=false to crawl only; auto_translate=false to crawl + clean only.
     """
     return _start_crawl(scope="all", language=language, force=force,
-                        limit=limit, resume=resume)
+                        limit=limit, resume=resume,
+                        auto_clean=auto_clean or auto_translate,
+                        auto_translate=auto_translate)
 
 
 @router.post("/crawl/festivals")
@@ -269,9 +390,13 @@ async def crawl_festivals_only(
     force: bool = Query(False),
     limit: int | None = Query(None, ge=1),
     resume: bool = Query(False),
+    auto_clean: bool = Query(True, description="Auto-run LLM clean after crawl completes."),
+    auto_translate: bool = Query(True, description="Auto-run LLM translate after clean completes."),
 ):
     return _start_crawl(scope="festivals", language=language, force=force,
-                        limit=limit, resume=resume)
+                        limit=limit, resume=resume,
+                        auto_clean=auto_clean or auto_translate,
+                        auto_translate=auto_translate)
 
 
 @router.post("/crawl/muhurats")
@@ -280,9 +405,190 @@ async def crawl_muhurats_only(
     force: bool = Query(False),
     limit: int | None = Query(None, ge=1),
     resume: bool = Query(False),
+    auto_clean: bool = Query(True, description="Auto-run LLM clean after crawl completes."),
+    auto_translate: bool = Query(True, description="Auto-run LLM translate after clean completes."),
 ):
     return _start_crawl(scope="muhurats", language=language, force=force,
-                        limit=limit, resume=resume)
+                        limit=limit, resume=resume,
+                        auto_clean=auto_clean or auto_translate,
+                        auto_translate=auto_translate)
+
+
+# -------------------------------------------------------------------------
+# Horoscope pre-warm: bulk-fetch all signs × periods, then auto-clean.
+# -------------------------------------------------------------------------
+
+_VALID_PERIODS = frozenset({
+    "daily", "tomorrow", "weekly", "weekly_love",
+    "monthly", "next_month", "yearly",
+})
+
+
+async def _run_horoscope_prewarm(
+    *,
+    periods: list[str],
+    language: str,
+    force: bool,
+    auto_clean: bool,
+    auto_deepdive: bool,
+) -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from backend.services.horoscope import SIGNS, get_horoscope
+
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    total = len(SIGNS) * len(periods)
+    fetched = 0
+    errors = 0
+
+    print(
+        f"[horoscope-prewarm] Starting — "
+        f"{len(SIGNS)} signs × {len(periods)} periods = {total} pages",
+        flush=True,
+    )
+
+    for sign in SIGNS:
+        for period in periods:
+            try:
+                await get_horoscope(
+                    sign=sign, period=period, d=today,
+                    language=language, tz="Asia/Kolkata", force=force,
+                )
+                fetched += 1
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                print(
+                    f"[horoscope-prewarm] {sign}/{period} FAILED: {exc}",
+                    flush=True,
+                )
+
+    print(
+        f"[horoscope-prewarm] Fetch done — fetched={fetched} errors={errors}",
+        flush=True,
+    )
+
+    if not (auto_clean or auto_deepdive):
+        return
+
+    from backend.routers.llm import (
+        LLMJobManager,
+        LLMCleanRequest,
+        _make_horoscope_runner,
+        _make_deepdive_runner,
+    )
+    from backend.services.llm import DEFAULT_MODEL, is_llm_enabled
+
+    if not is_llm_enabled():
+        print(
+            "[horoscope-prewarm] LLM not configured — skipping clean phases",
+            flush=True,
+        )
+        return
+
+    req = LLMCleanRequest()
+
+    if auto_clean:
+        print("[horoscope-prewarm] Starting LLM clean/horoscope ...", flush=True)
+        hj = LLMJobManager.start(
+            category="horoscope", model=DEFAULT_MODEL, dry_run=False,
+            runner=_make_horoscope_runner(req),
+        )
+        if hj.task:
+            await asyncio.shield(hj.task)
+        print(
+            f"[horoscope-prewarm] horoscope clean done (status={hj.status})",
+            flush=True,
+        )
+
+    if auto_deepdive:
+        print("[horoscope-prewarm] Starting LLM clean/sign-deepdive ...", flush=True)
+        dj = LLMJobManager.start(
+            category="sign-deepdive", model=DEFAULT_MODEL, dry_run=False,
+            runner=_make_deepdive_runner(req),
+        )
+        if dj.task:
+            await asyncio.shield(dj.task)
+        print(
+            f"[horoscope-prewarm] sign-deepdive clean done (status={dj.status})",
+            flush=True,
+        )
+
+    print("[horoscope-prewarm] Pipeline complete.", flush=True)
+
+
+@router.post("/horoscope")
+async def prewarm_horoscope(
+    periods: str = Query(
+        "daily,weekly,monthly",
+        description=(
+            "Comma-separated periods to pre-fetch. "
+            "Valid values: daily, tomorrow, weekly, weekly_love, monthly, next_month, yearly."
+        ),
+    ),
+    language: str = Query("en"),
+    force: bool = Query(False, description="Re-fetch even if already cached."),
+    auto_clean: bool = Query(
+        True,
+        description="Run LLM clean/horoscope after all pages are fetched.",
+    ),
+    auto_deepdive: bool = Query(
+        False,
+        description="Run LLM clean/sign-deepdive after horoscope clean. Implies auto_clean.",
+    ),
+):
+    """
+    Pre-warm horoscope predictions for all 12 signs and the given periods.
+    Runs in the background; returns immediately with a summary.
+    Track LLM clean progress via GET /v1/admin/llm/jobs.
+    """
+    period_list = [p.strip() for p in periods.split(",") if p.strip()]
+    invalid = [p for p in period_list if p not in _VALID_PERIODS]
+    if invalid:
+        raise HTTPException(
+            400,
+            f"Unknown periods: {invalid}. Valid: {sorted(_VALID_PERIODS)}",
+        )
+
+    asyncio.create_task(
+        _run_horoscope_prewarm(
+            periods=period_list,
+            language=language,
+            force=force,
+            auto_clean=auto_clean or auto_deepdive,
+            auto_deepdive=auto_deepdive,
+        )
+    )
+
+    from backend.services.horoscope import SIGNS
+    return {
+        "status": "started",
+        "signs": list(SIGNS),
+        "periods": period_list,
+        "language": language,
+        "total_pages": len(SIGNS) * len(period_list),
+        "auto_clean": auto_clean or auto_deepdive,
+        "auto_deepdive": auto_deepdive,
+    }
+
+
+@router.post("/horoscope/cleanup")
+async def cleanup_horoscope_cache(
+    tz: str = Query(
+        "Asia/Kolkata",
+        description="Timezone used to determine the current calendar window.",
+    ),
+):
+    """
+    Delete stale horoscope_predictions rows from the DB.
+
+    A row is stale when its period_key is before the current calendar window
+    for that period type (e.g., a daily row from yesterday, a weekly row from
+    last week). Returns the count of deleted rows and the cutoff keys used.
+    """
+    from backend.services.horoscope import cleanup_stale_horoscopes
+
+    result = await asyncio.to_thread(cleanup_stale_horoscopes, tz)
+    return result
 
 
 @router.post("/jobs/current/cancel")

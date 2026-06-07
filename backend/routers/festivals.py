@@ -16,13 +16,18 @@ from datetime import date as Date, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
+from backend.auth import require_user
 from backend.services.cache import DEFAULT_CACHE_CONTROL
 from backend.services.db import async_db
 from backend.services.festivals import festivals_in_range
 
-router = APIRouter(prefix="/v1/festivals", tags=["festivals"])
+router = APIRouter(
+    prefix="/v1/festivals",
+    tags=["festivals"],
+    dependencies=[Depends(require_user)],
+)
 
 LangQ = Query("en", min_length=2, max_length=5)
 LatQ = Query(28.6139, ge=-90, le=90)

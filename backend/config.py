@@ -53,6 +53,18 @@ GROQ_MODEL: str = os.getenv("GROQ_MODEL", LLM_MODEL)
 DATABASE_URL: str | None = os.getenv("DATABASE_URL")
 
 # ---------------------------------------------------------------------------
+# API Authentication
+# ---------------------------------------------------------------------------
+
+#: Full-access key — admin operations (scrape, LLM clean/translate).
+#: Must NEVER be embedded in the mobile app binary.
+ADMIN_API_KEY: str | None = os.getenv("ADMIN_API_KEY")
+
+#: Read-only key — content endpoints (horoscope, festivals, panchang, …).
+#: Safe to embed in the app; grants no write or admin access.
+USER_API_KEY: str | None = os.getenv("USER_API_KEY")
+
+# ---------------------------------------------------------------------------
 # CORS
 # ---------------------------------------------------------------------------
 
@@ -91,7 +103,7 @@ FESTIVAL_SNAPSHOT_PREWARM_POINTS: str = os.getenv(
 #: How many years ahead to prewarm (default: current year only).
 try:
     FESTIVAL_SNAPSHOT_PREWARM_YEARS: int = max(
-        1, int(os.getenv("FESTIVAL_SNAPSHOT_PREWARM_YEARS", "1"))
+        1, int(os.getenv("FESTIVAL_SNAPSHOT_PREWARM_YEARS", "5"))
     )
 except ValueError:
     FESTIVAL_SNAPSHOT_PREWARM_YEARS = 1

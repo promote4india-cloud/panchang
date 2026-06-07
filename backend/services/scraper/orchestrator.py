@@ -46,6 +46,26 @@ ROOT_MUHURAT = f"https://{ASTROSAGE_HOST}/muhurat"
 
 MAX_FESTIVAL_DEPTH = 3  # /festival/<a>/<b>/<c>
 
+# Slugs confirmed by the site map to have no page at /festival/<slug2>.
+# They only serve as parent containers for depth-3 URLs.
+_FESTIVAL_NO_L2_PAGE: frozenset[str] = frozenset({
+    "baisakhi", "cheti-chand", "dussehra", "ganesh-chaturthi",
+    "gudi-padwa", "guru-purnima", "hanuman-jayanti", "holi",
+    "janmashtami", "karvachauth", "nag-panchami", "onam",
+    "shivratri", "teej", "ugadi",
+})
+
+# (slug2, slug3) pairs with no page at /festival/<slug2>/<slug3>.
+# They only serve as parent containers for depth-4 URLs.
+_FESTIVAL_NO_L3_PAGE: frozenset[tuple[str, str]] = frozenset({
+    ("diwali", "dhanteras"),
+    ("diwali", "govardhanpuja"),
+    ("diwali", "narak-chaturdashi"),
+    ("navratri", "chaitra-navratri"),
+    ("navratri", "durga-puja"),
+    ("navratri", "sharad-navratri"),
+})
+
 
 # --- discovery helpers -----------------------------------------------------
 
@@ -64,13 +84,23 @@ def _extract_muhurat_index(html_text: str) -> list[str]:
 
 
 def _ancestors(urls: list[str]) -> list[str]:
-    """For each /a/b/c URL, also queue /a/b and /a (shallow first)."""
+    """For each /a/b/c URL, also queue /a/b and /a (shallow first).
+
+    Skips intermediate paths that are known container-only nodes with no
+    real page on astrosage (confirmed via site map analysis).
+    """
     seen: set[str] = set()
     out: list[str] = []
     for u in urls:
         parts = _path_parts(u)
         for i in range(2, len(parts) + 1):
-            ancestor = f"https://{ASTROSAGE_HOST}/" + "/".join(parts[:i])
+            seg = parts[:i]
+            if seg[0] == "festival":
+                if len(seg) == 2 and seg[1] in _FESTIVAL_NO_L2_PAGE:
+                    continue
+                if len(seg) == 3 and (seg[1], seg[2]) in _FESTIVAL_NO_L3_PAGE:
+                    continue
+            ancestor = f"https://{ASTROSAGE_HOST}/" + "/".join(seg)
             if ancestor not in seen:
                 seen.add(ancestor)
                 out.append(ancestor)
@@ -221,7 +251,12 @@ async def crawl_festivals(
             # BFS-expand children declared on a festival_top page.
             if isinstance(parsed, ParsedFestival):
                 for sub_slug in parsed.child_slugs:
-                    if len(sub_slug.split("/")) > MAX_FESTIVAL_DEPTH:
+                    sub_parts = sub_slug.split("/")
+                    if len(sub_parts) > MAX_FESTIVAL_DEPTH:
+                        continue
+                    if len(sub_parts) == 1 and sub_parts[0] in _FESTIVAL_NO_L2_PAGE:
+                        continue
+                    if len(sub_parts) == 2 and (sub_parts[0], sub_parts[1]) in _FESTIVAL_NO_L3_PAGE:
                         continue
                     child_url = f"https://{ASTROSAGE_HOST}/festival/{sub_slug}"
                     if child_url not in seen:
