@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from backend.services.cache import DEFAULT_CACHE_CONTROL
-from backend.services.db import connect_ro
+from backend.services.db import async_db
 from backend.services.festivals import festivals_in_range
 
 router = APIRouter(prefix="/v1/festivals", tags=["festivals"])
@@ -297,41 +297,43 @@ def _content_payload(row) -> dict:
     return data
 
 
-def _fetch_festival_content(conn, festival_ids: list[str], language: str) -> dict[str, dict]:
+async def _fetch_festival_content(conn, festival_ids: list[str], language: str) -> dict[str, dict]:
     if not festival_ids:
         return {}
     placeholders = ",".join(["%s"] * len(festival_ids))
-    rows = conn.execute(
+    cur = await conn.execute(
         f"""
         SELECT * FROM festival_content
          WHERE festival_id IN ({placeholders})
            AND language = %s
         """,
         (*festival_ids, language),
-    ).fetchall()
+    )
+    rows = await cur.fetchall()
     content = {r["festival_id"]: _content_payload(r) for r in rows}
     if language != "en":
         missing = [fid for fid in festival_ids if fid not in content]
         if missing:
             placeholders = ",".join(["%s"] * len(missing))
-            rows = conn.execute(
+            cur = await conn.execute(
                 f"""
                 SELECT * FROM festival_content
                  WHERE festival_id IN ({placeholders})
                    AND language = 'en'
                 """,
                 (*missing,),
-            ).fetchall()
+            )
+            rows = await cur.fetchall()
             for r in rows:
                 content.setdefault(r["festival_id"], _content_payload(r))
     return content
 
 
-def _fetch_festival_rituals(conn, festival_ids: list[str], language: str) -> dict[str, list[str]]:
+async def _fetch_festival_rituals(conn, festival_ids: list[str], language: str) -> dict[str, list[str]]:
     if not festival_ids:
         return {}
     placeholders = ",".join(["%s"] * len(festival_ids))
-    rows = conn.execute(
+    cur = await conn.execute(
         f"""
         SELECT festival_id, text
           FROM festival_rituals
@@ -340,18 +342,19 @@ def _fetch_festival_rituals(conn, festival_ids: list[str], language: str) -> dic
          ORDER BY festival_id, position
         """,
         (*festival_ids, language),
-    ).fetchall()
+    )
+    rows = await cur.fetchall()
     rituals: dict[str, list[str]] = {}
     for row in rows:
         rituals.setdefault(row["festival_id"], []).append(row["text"])
     return rituals
 
 
-def _fetch_festival_faqs(conn, festival_ids: list[str], language: str) -> dict[str, list[dict]]:
+async def _fetch_festival_faqs(conn, festival_ids: list[str], language: str) -> dict[str, list[dict]]:
     if not festival_ids:
         return {}
     placeholders = ",".join(["%s"] * len(festival_ids))
-    rows = conn.execute(
+    cur = await conn.execute(
         f"""
         SELECT festival_id, question, answer
           FROM festival_faqs
@@ -360,7 +363,8 @@ def _fetch_festival_faqs(conn, festival_ids: list[str], language: str) -> dict[s
          ORDER BY festival_id, position
         """,
         (*festival_ids, language),
-    ).fetchall()
+    )
+    rows = await cur.fetchall()
     faqs: dict[str, list[dict]] = {}
     for row in rows:
         faqs.setdefault(row["festival_id"], []).append(
@@ -481,7 +485,7 @@ def upcoming(
 
 
 @router.get("/calendar")
-def calendar(
+async def calendar(
     response: Response,
     year: int = Query(..., ge=1900, le=2100),
     month: int = Query(..., ge=1, le=12),
@@ -508,13 +512,10 @@ def calendar(
     faqs_map: dict[str, list[dict]] = {}
     if include_content and occ:
         festival_ids = sorted({o.festival_id for o in occ})
-        conn = connect_ro()
-        try:
-            content_map = _fetch_festival_content(conn, festival_ids, language)
-            rituals_map = _fetch_festival_rituals(conn, festival_ids, language)
-            faqs_map = _fetch_festival_faqs(conn, festival_ids, language)
-        finally:
-            conn.close()
+        async with async_db() as conn:
+            content_map = await _fetch_festival_content(conn, festival_ids, language)
+            rituals_map = await _fetch_festival_rituals(conn, festival_ids, language)
+            faqs_map = await _fetch_festival_faqs(conn, festival_ids, language)
     by_day: dict[int, list[dict]] = {}
     for o in occ:
         item = {
@@ -546,7 +547,7 @@ def calendar(
 
 
 @router.get("/{festival_id}/dates")
-def festival_dates(
+async def festival_dates(
     festival_id: str,
     response: Response,
     year: int = Query(..., ge=1900, le=2100),
@@ -574,22 +575,21 @@ def festival_dates(
     # Collect the festival_id plus, optionally, every descendant. We walk
     # by `slug_path` prefix (more reliable than `parent_id`, which is not
     # always populated on imported rows).
-    conn = connect_ro()
-    try:
-        root = conn.execute(
+    async with async_db() as conn:
+        root = await conn.execute(
             "SELECT id, slug_path FROM festivals WHERE id = %s", (festival_id,)
-        ).fetchone()
+        )
+        root = await root.fetchone()
         if not root:
             raise HTTPException(404, f"Unknown festival: {festival_id}")
         ids: set[str] = {festival_id}
         if include_children:
             prefix = root["slug_path"] + "/"
-            for r in conn.execute(
+            cur = await conn.execute(
                 "SELECT id FROM festivals WHERE slug_path LIKE %s", (prefix + "%",),
-            ).fetchall():
+            )
+            for r in await cur.fetchall():
                 ids.add(r["id"])
-    finally:
-        conn.close()
 
     start = Date(year, 1, 1)
     end = Date(year, 12, 31)
@@ -643,7 +643,7 @@ def festival_dates(
 
 
 @router.get("/{festival_id}")
-def festival_detail(
+async def festival_detail(
     festival_id: str,
     response: Response,
     language: str = LangQ,
@@ -662,39 +662,41 @@ def festival_detail(
     calendar_time: str = CalendarTimeQ,
 ):
     response.headers["Cache-Control"] = DEFAULT_CACHE_CONTROL
-    conn = connect_ro()
-    try:
-        f = conn.execute(
+    async with async_db() as conn:
+        cur = await conn.execute(
             "SELECT * FROM festivals WHERE id = %s", (festival_id,)
-        ).fetchone()
+        )
+        f = await cur.fetchone()
         if not f:
             raise HTTPException(404, f"Unknown festival: {festival_id}")
-        c = conn.execute(
+        cur = await conn.execute(
             "SELECT * FROM festival_content WHERE festival_id = %s AND language = %s",
             (festival_id, language),
-        ).fetchone() or conn.execute(
-            "SELECT * FROM festival_content WHERE festival_id = %s AND language = 'en'",
-            (festival_id,),
-        ).fetchone()
-        rituals = [
-            r["text"] for r in conn.execute(
-                """SELECT text FROM festival_rituals
-                   WHERE festival_id = %s AND language = %s
-                   ORDER BY position""",
-                (festival_id, language),
-            ).fetchall()
-        ]
+        )
+        c = await cur.fetchone()
+        if not c:
+            cur = await conn.execute(
+                "SELECT * FROM festival_content WHERE festival_id = %s AND language = 'en'",
+                (festival_id,),
+            )
+            c = await cur.fetchone()
+        cur = await conn.execute(
+            """SELECT text FROM festival_rituals
+               WHERE festival_id = %s AND language = %s
+               ORDER BY position""",
+            (festival_id, language),
+        )
+        rituals = [r["text"] for r in await cur.fetchall()]
+        cur = await conn.execute(
+            """SELECT question, answer FROM festival_faqs
+               WHERE festival_id = %s AND language = %s
+               ORDER BY position""",
+            (festival_id, language),
+        )
         faqs = [
             {"question": r["question"], "answer": r["answer"]}
-            for r in conn.execute(
-                """SELECT question, answer FROM festival_faqs
-                   WHERE festival_id = %s AND language = %s
-                   ORDER BY position""",
-                (festival_id, language),
-            ).fetchall()
+            for r in await cur.fetchall()
         ]
-    finally:
-        conn.close()
 
     result = {
         "id": f["id"],

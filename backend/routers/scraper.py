@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query
 
-from backend.services.db import connect_ro, connect_rw
+from backend.services.db import connect_rw, async_db
 from backend.services.scraper import fetch_page, get_parser
 from backend.services.scraper.registry import (
     ParsedFestival,
@@ -306,13 +306,11 @@ async def current_job():
 
 @router.get("/jobs")
 async def list_jobs(limit: int = Query(20, ge=1, le=200)):
-    conn = connect_ro()
-    try:
-        rows = conn.execute(
+    async with async_db() as conn:
+        cur = await conn.execute(
             "SELECT * FROM crawl_jobs ORDER BY started_at DESC LIMIT %s", (limit,),
-        ).fetchall()
-    finally:
-        conn.close()
+        )
+        rows = await cur.fetchall()
     return [dict(r) for r in rows]
 
 
@@ -320,31 +318,29 @@ async def list_jobs(limit: int = Query(20, ge=1, le=200)):
 async def job_detail(job_id: str):
     from backend.services.scraper.jobs import JobManager
     live = JobManager.current()
-    conn = connect_ro()
-    try:
-        row = conn.execute(
+    async with async_db() as conn:
+        cur = await conn.execute(
             "SELECT * FROM crawl_jobs WHERE id = %s", (job_id,),
-        ).fetchone()
+        )
+        row = await cur.fetchone()
         if not row:
             raise HTTPException(404, f"Unknown job_id: {job_id}")
+        cur = await conn.execute(
+            "SELECT status, COUNT(*) n FROM crawl_tasks "
+            "WHERE last_job_id = %s GROUP BY status",
+            (job_id,),
+        )
         task_counts = {
             r["status"]: r["n"]
-            for r in conn.execute(
-                "SELECT status, COUNT(*) n FROM crawl_tasks "
-                "WHERE last_job_id = %s GROUP BY status",
-                (job_id,),
-            ).fetchall()
+            for r in await cur.fetchall()
         }
-        recent_errors = [
-            dict(r) for r in conn.execute(
-                "SELECT url, error, updated_at FROM crawl_tasks "
-                "WHERE last_job_id = %s AND status = 'failed' "
-                "ORDER BY updated_at DESC LIMIT 25",
-                (job_id,),
-            ).fetchall()
-        ]
-    finally:
-        conn.close()
+        cur = await conn.execute(
+            "SELECT url, error, updated_at FROM crawl_tasks "
+            "WHERE last_job_id = %s AND status = 'failed' "
+            "ORDER BY updated_at DESC LIMIT 25",
+            (job_id,),
+        )
+        recent_errors = [dict(r) for r in await cur.fetchall()]
     out = dict(row)
     out["task_counts"] = task_counts
     out["recent_errors"] = recent_errors
@@ -367,33 +363,40 @@ async def list_tasks(
         sql += " AND scope = %s";  params.append(scope)
     sql += " ORDER BY updated_at DESC LIMIT %s"
     params.append(limit)
-    conn = connect_ro()
-    try:
-        rows = conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
+    async with async_db() as conn:
+        cur = await conn.execute(sql, params)
+        rows = await cur.fetchall()
     return [dict(r) for r in rows]
 
 
 @router.get("/status")
-def status():
-    conn = connect_ro()
-    try:
+async def status():
+    async with async_db() as conn:
+        cur = await conn.execute("SELECT COUNT(*) c FROM scraped_pages")
+        scraped = (await cur.fetchone())["c"]
+        cur = await conn.execute("SELECT COUNT(*) c FROM festivals")
+        festivals_count = (await cur.fetchone())["c"]
+        cur = await conn.execute("SELECT COUNT(*) c FROM festival_content")
+        fc_count = (await cur.fetchone())["c"]
+        cur = await conn.execute("SELECT COUNT(*) c FROM muhurat_types")
+        mt_count = (await cur.fetchone())["c"]
+        cur = await conn.execute("SELECT COUNT(*) c FROM muhurat_content")
+        mc_count = (await cur.fetchone())["c"]
         counts = {
-            "scraped_pages": conn.execute("SELECT COUNT(*) c FROM scraped_pages").fetchone()["c"],
-            "festivals": conn.execute("SELECT COUNT(*) c FROM festivals").fetchone()["c"],
-            "festival_content": conn.execute("SELECT COUNT(*) c FROM festival_content").fetchone()["c"],
-            "muhurat_types": conn.execute("SELECT COUNT(*) c FROM muhurat_types").fetchone()["c"],
-            "muhurat_content": conn.execute("SELECT COUNT(*) c FROM muhurat_content").fetchone()["c"],
+            "scraped_pages": scraped,
+            "festivals": festivals_count,
+            "festival_content": fc_count,
+            "muhurat_types": mt_count,
+            "muhurat_content": mc_count,
         }
-        errors = conn.execute(
+        cur = await conn.execute(
             "SELECT url, parse_error FROM scraped_pages WHERE parse_error IS NOT NULL LIMIT 25"
-        ).fetchall()
-        last = conn.execute(
+        )
+        errors = await cur.fetchall()
+        cur = await conn.execute(
             "SELECT url, fetched_at FROM scraped_pages ORDER BY fetched_at DESC LIMIT 5"
-        ).fetchall()
-    finally:
-        conn.close()
+        )
+        last = await cur.fetchall()
     return {
         "counts": counts,
         "recent_errors": [dict(r) for r in errors],
