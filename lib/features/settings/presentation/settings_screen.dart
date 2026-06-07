@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:panchang_app/l10n/app_localizations.dart';
 import '../../../config/user_config.dart';
@@ -27,6 +26,17 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
 
   @override
   Widget build(BuildContext context) {
+    // Surface GPS / resolve errors as a snackbar
+    ref.listen<AsyncValue<UserLocationSettings>>(userLocationProvider, (_, next) {
+      if (next is AsyncError && mounted) {
+        final err = next.error;
+        final msg = err is LocationDetectionError
+            ? err.message
+            : 'Location detection failed. Please try again.';
+        _showSnack(msg);
+      }
+    });
+
     final locationState = ref.watch(userLocationProvider);
     final autoDetection = locationState.value?.automaticDetection ?? true;
     final isLocationBusy = locationState.isLoading;
@@ -122,12 +132,24 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                   context,
                   icon: LucideIcons.locate,
                   title: l.automaticDetection,
-                  subtitle: l.automaticDetectionSubtitle,
+                  subtitle: isLocationBusy
+                      ? 'Detecting your location…'
+                      : l.automaticDetectionSubtitle,
                   value: autoDetection,
                   onChanged: isLocationBusy
                       ? null
                       : (val) => _handleAutomaticDetectionChange(val),
                   showDivider: true,
+                  trailingOverride: isLocationBusy
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: c.primaryContainer,
+                          ),
+                        )
+                      : null,
                 ),
                 _buildNavigationRow(
                   context,
@@ -369,6 +391,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     required bool value,
     required ValueChanged<bool>? onChanged,
     bool showDivider = false,
+    Widget? trailingOverride,
   }) {
     final c = AppColorsOf(context);
     return Column(
@@ -401,13 +424,17 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                   ],
                 ),
               ),
-              Switch.adaptive(
-                value: value,
-                onChanged: onChanged,
-                activeColor: Colors.white,
-                activeTrackColor: c.primaryContainer,
-                inactiveTrackColor: c.outlineVariant.withOpacity(0.4),
-              ),
+              // Either show a custom trailing widget or the default Switch
+              if (trailingOverride != null)
+                trailingOverride
+              else
+                Switch.adaptive(
+                  value: value,
+                  onChanged: onChanged,
+                  activeColor: Colors.white,
+                  activeTrackColor: c.primaryContainer,
+                  inactiveTrackColor: c.outlineVariant.withOpacity(0.4),
+                ),
             ],
           ),
         ),
@@ -611,27 +638,19 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     focusNode.dispose();
   }
 
+  /// Called when the user flips the Automatic Detection toggle.
+  /// All GPS logic (permission, positioning, reverse-geocode) is now
+  /// handled inside [UserLocationNotifier.setAutomaticDetection] /
+  /// [UserLocationNotifier.detectAndResolve] — the UI just delegates.
   Future<void> _handleAutomaticDetectionChange(bool enabled) async {
     await ref
         .read(userLocationProvider.notifier)
         .setAutomaticDetection(enabled);
-    if (!enabled) return;
-
-    final permissionOk = await _ensureLocationPermission();
-    if (!permissionOk) return;
-
-    try {
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-      await ref
-          .read(userLocationProvider.notifier)
-          .setCoordinates(position.latitude, position.longitude);
-    } catch (error) {
-      _showSnack('Unable to fetch current location.');
-    }
+    // Errors surface via ref.listen in build()
   }
 
+  /// Returns the first word of [value], used to abbreviate city labels
+  /// in the narrow "Manual Entry" row trailing text.
   String _firstWord(String value) {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return value;
@@ -639,31 +658,13 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     return parts.isNotEmpty ? parts.first : value;
   }
 
-  Future<bool> _ensureLocationPermission() async {
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      _showSnack('Location services are disabled.');
-      return false;
-    }
-
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      _showSnack('Location permission denied.');
-      return false;
-    }
-
-    return true;
-  }
-
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 }

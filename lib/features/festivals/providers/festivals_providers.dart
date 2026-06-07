@@ -49,7 +49,8 @@ final festivalsCalendarProvider = FutureProvider<FestivalsCalendarVm>((
   ref,
 ) async {
   final api = ref.read(panchangApiProvider);
-  final baseQuery = ref.read(dashboardQueryProvider);
+  // ref.watch ensures this provider re-runs whenever the selected language changes
+  final baseQuery = ref.watch(dashboardQueryProvider);
   final activeMonth = ref.watch(festivalMonthProvider);
 
   final startDate = DateTime(activeMonth.year, activeMonth.month, 1);
@@ -126,7 +127,8 @@ final festivalsCalendarProvider = FutureProvider<FestivalsCalendarVm>((
 
 final spiritualTipProvider = FutureProvider<String>((ref) async {
   final api = ref.read(panchangApiProvider);
-  final query = ref.read(dashboardQueryProvider);
+  // ref.watch ensures the spiritual tip refreshes when the language changes
+  final query = ref.watch(dashboardQueryProvider);
   final panchang = await api.fetchPanchangToday(query);
 
   final monthName = panchang.hinduMonthAndYear.monthPurnimanta.isNotEmpty

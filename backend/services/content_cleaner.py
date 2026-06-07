@@ -340,6 +340,23 @@ async def clean_horoscope_batch(
     return await _call_llm(payload, model)
 
 
+async def translate_horoscope_batch(
+    en_rows: list[dict],
+    *,
+    model: str = DEFAULT_MODEL,
+) -> dict[str, dict[str, dict]] | None:
+    """
+    Translate a batch of cleaned English horoscope rows into all 11
+    non-English target languages in a single LLM call.
+
+    Returns {composite_key: {lang_code: {field: value}}} or None on failure.
+    """
+    payload = _build_horoscope_payload(en_rows)
+    if not payload:
+        return {}
+    return await _call_llm(payload, model, system_prompt=_TRANSLATION_SYSTEM_PROMPT)
+
+
 # ---------------------------------------------------------------------------
 # Zodiac sign deep-dive batch cleaner
 # ---------------------------------------------------------------------------

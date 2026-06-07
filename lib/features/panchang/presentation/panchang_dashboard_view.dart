@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:panchang_app/l10n/app_localizations.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../config/app_config.dart';
 import '../../../constants/app_colors.dart';
 import '../../../constants/app_themes.dart';
 import '../../../assset/zodiac_icons.dart';
 import '../models/panchang_models.dart';
 import '../providers/panchang_providers.dart';
 import '../../../providers/app_providers.dart';
+import '../data/panchang_api.dart';
 import '../../../features/festivals/providers/festivals_providers.dart';
 
 class PanchangDashboardView extends ConsumerWidget {
@@ -309,7 +311,7 @@ class _SectionHeader extends StatelessWidget {
 	}
 }
 
-class _MuhuratScroller extends StatelessWidget {
+class _MuhuratScroller extends ConsumerWidget {
 	final String title;
 	final List<PanchangMuhuratVm> items;
 	final bool isPositive;
@@ -321,7 +323,7 @@ class _MuhuratScroller extends StatelessWidget {
 	});
 
 	@override
-	Widget build(BuildContext context) {
+	Widget build(BuildContext context, WidgetRef ref) {
 		final c = AppColorsOf(context);
 		final toneColor = isPositive ? c.primaryContainer : c.error;
 		final bgColor = isPositive
@@ -349,35 +351,54 @@ class _MuhuratScroller extends StatelessWidget {
 								separatorBuilder: (_, __) => const SizedBox(width: 10),
 								itemBuilder: (context, index) {
 									final item = items[index];
-									return Container(
-										width: 170,
-										padding: const EdgeInsets.all(12),
-										decoration: BoxDecoration(
-											color: bgColor,
-											borderRadius: BorderRadius.circular(12),
-										),
-										child: Column(
-											crossAxisAlignment: CrossAxisAlignment.start,
-											mainAxisAlignment: MainAxisAlignment.spaceBetween,
-											children: [
-												Text(
-													item.name,
-													maxLines: 1,
-													overflow: TextOverflow.ellipsis,
-													style: AppThemes.labelMd.copyWith(
-														fontWeight: FontWeight.w800,
-														fontSize: 14,
-														color: c.onSurfaceVariant,
-													),
+									return GestureDetector(
+										onTap: () => _showMuhuratDetail(context, ref, item),
+										child: Container(
+											width: 170,
+											padding: const EdgeInsets.all(12),
+											decoration: BoxDecoration(
+												color: bgColor,
+												borderRadius: BorderRadius.circular(12),
+												border: Border.all(
+													color: toneColor.withOpacity(0.15),
+													width: 1,
 												),
-												Text(
-													item.timeRange,
-													style: AppThemes.bodySm.copyWith(
-														fontWeight: FontWeight.w400,
-														color: c.onSurface,
+											),
+											child: Column(
+												crossAxisAlignment: CrossAxisAlignment.start,
+												mainAxisAlignment: MainAxisAlignment.spaceBetween,
+												children: [
+													Row(
+														mainAxisAlignment: MainAxisAlignment.spaceBetween,
+														children: [
+															Expanded(
+																child: Text(
+																	item.name,
+																	maxLines: 1,
+																	overflow: TextOverflow.ellipsis,
+																	style: AppThemes.labelMd.copyWith(
+																		fontWeight: FontWeight.w800,
+																		fontSize: 14,
+																		color: c.onSurfaceVariant,
+																	),
+																),
+															),
+															Icon(
+																LucideIcons.info,
+																size: 14,
+																color: toneColor.withOpacity(0.6),
+															),
+														],
 													),
-												),
-											],
+													Text(
+														item.timeRange,
+														style: AppThemes.bodySm.copyWith(
+															fontWeight: FontWeight.w400,
+															color: c.onSurface,
+														),
+													),
+												],
+											),
 										),
 									);
 								},
@@ -422,7 +443,204 @@ class _MuhuratScroller extends StatelessWidget {
 			],
 		);
 	}
+
+	void _showMuhuratDetail(BuildContext context, WidgetRef ref, PanchangMuhuratVm item) {
+		showModalBottomSheet<void>(
+			context: context,
+			isScrollControlled: true,
+			backgroundColor: Colors.transparent,
+			builder: (_) => _MuhuratDetailSheet(item: item, ref: ref),
+		);
+	}
 }
+
+// ---------------------------------------------------------------------------
+// Muhurat detail bottom sheet
+// ---------------------------------------------------------------------------
+
+class _MuhuratDetailSheet extends ConsumerWidget {
+	final PanchangMuhuratVm item;
+	final WidgetRef ref;
+
+	const _MuhuratDetailSheet({required this.item, required this.ref});
+
+	@override
+	Widget build(BuildContext context, WidgetRef selfRef) {
+		final c = AppColorsOf(context);
+		final isAuspicious = item.category == 'auspicious';
+		final accentColor = isAuspicious ? c.primaryContainer : c.error;
+		final bgAccent = isAuspicious
+				? (c.isDark ? const Color(0xFF1A2E1A) : const Color(0xFFECF7EC))
+				: (c.isDark ? const Color(0xFF2E1A1A) : const Color(0xFFFFF0F0));
+
+		// Fetch the description from backend lazily
+		final query = selfRef.read(dashboardQueryProvider);
+		final api = PanchangApiClient(baseUrl: AppConfig.apiBaseUrl);
+		final detailFuture = api.fetchMuhuratDetail(item.id, query);
+
+		return Container(
+			decoration: BoxDecoration(
+				color: c.surface,
+				borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+			),
+			padding: EdgeInsets.fromLTRB(
+				24, 12, 24,
+				MediaQuery.of(context).viewInsets.bottom + MediaQuery.of(context).padding.bottom + 24,
+			),
+			child: Column(
+				mainAxisSize: MainAxisSize.min,
+				crossAxisAlignment: CrossAxisAlignment.start,
+				children: [
+					// Handle bar
+					Center(
+						child: Container(
+							width: 40, height: 4,
+							margin: const EdgeInsets.only(bottom: 20),
+							decoration: BoxDecoration(
+								color: c.outlineVariant.withOpacity(0.5),
+								borderRadius: BorderRadius.circular(2),
+							),
+						),
+					),
+
+					// Devanagari name (large, decorative)
+					if (item.devanagari.isNotEmpty)
+						Text(
+							item.devanagari,
+							style: TextStyle(
+								fontSize: 36,
+								fontWeight: FontWeight.w700,
+								color: accentColor,
+								letterSpacing: 1.0,
+								height: 1.1,
+							),
+						),
+
+					const SizedBox(height: 4),
+
+					// Sanskrit + English names
+					Text(
+						item.sanskritName.isNotEmpty && item.sanskritName != item.name
+								? '${item.sanskritName}  ·  ${item.name}'
+								: item.name,
+						style: AppThemes.bodyLg.copyWith(
+							color: c.onSurfaceVariant,
+							fontWeight: FontWeight.w500,
+						),
+					),
+
+					const SizedBox(height: 16),
+
+					// Badges row: time window | day/night | auspicious
+					Wrap(
+						spacing: 8,
+						runSpacing: 8,
+						children: [
+							_Badge(
+								icon: Icons.access_time_rounded,
+								label: item.timeRange,
+								color: c.primaryContainer,
+							),
+							_Badge(
+								icon: item.period == 'day'
+										? Icons.wb_sunny_rounded
+										: Icons.nightlight_round,
+								label: item.period == 'day' ? 'Daytime' : 'Nighttime',
+								color: item.period == 'day'
+										? const Color(0xFFF59E0B)
+										: const Color(0xFF6366F1),
+							),
+							_Badge(
+								icon: isAuspicious
+										? Icons.check_circle_rounded
+										: Icons.cancel_rounded,
+								label: isAuspicious ? 'Auspicious' : 'Inauspicious',
+								color: accentColor,
+							),
+						],
+					),
+
+					const SizedBox(height: 20),
+
+					// Description from backend (lazy fetch)
+					FutureBuilder<MuhuratDetailDto>(
+						future: detailFuture,
+						builder: (context, snap) {
+							if (snap.connectionState == ConnectionState.waiting) {
+								return Center(
+									child: SizedBox(
+										height: 24,
+										width: 24,
+										child: CircularProgressIndicator(
+											strokeWidth: 2,
+											color: accentColor,
+										),
+									),
+								);
+							}
+							final desc = snap.data?.description;
+							if (desc == null || desc.isEmpty) return const SizedBox.shrink();
+							return Container(
+								padding: const EdgeInsets.all(16),
+								decoration: BoxDecoration(
+									color: bgAccent,
+									borderRadius: BorderRadius.circular(12),
+									border: Border.all(
+										color: accentColor.withOpacity(0.2),
+									),
+								),
+								child: Text(
+									desc,
+									style: AppThemes.bodyLg.copyWith(
+										color: c.onSurface,
+										height: 1.6,
+									),
+								),
+							);
+						},
+					),
+				],
+			),
+		);
+	}
+}
+
+class _Badge extends StatelessWidget {
+	final IconData icon;
+	final String label;
+	final Color color;
+
+	const _Badge({required this.icon, required this.label, required this.color});
+
+	@override
+	Widget build(BuildContext context) {
+		final c = AppColorsOf(context);
+		return Container(
+			padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+			decoration: BoxDecoration(
+				color: color.withOpacity(0.12),
+				borderRadius: BorderRadius.circular(20),
+				border: Border.all(color: color.withOpacity(0.3)),
+			),
+			child: Row(
+				mainAxisSize: MainAxisSize.min,
+				children: [
+					Icon(icon, size: 14, color: color),
+					const SizedBox(width: 6),
+					Text(
+						label,
+						style: TextStyle(
+							fontSize: 13,
+							fontWeight: FontWeight.w600,
+							color: color,
+						),
+					),
+				],
+			),
+		);
+	}
+}
+
 
 class _RashifalCard extends StatefulWidget {
 	final String sign;

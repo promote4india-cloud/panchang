@@ -56,6 +56,14 @@ class PanchangApiClient {
     return MuhuratBundleDto.fromJson(json);
   }
 
+  Future<MuhuratDetailDto> fetchMuhuratDetail(
+    String muhuratId,
+    DashboardQuery query,
+  ) async {
+    final json = await _getJson('/v1/muhurat/$muhuratId', query.toQueryParams());
+    return MuhuratDetailDto.fromJson(json);
+  }
+
   Future<FestivalsTodayResponseDto> fetchFestivalsToday(
     DashboardQuery query,
   ) async {
@@ -121,6 +129,22 @@ class PanchangApiClient {
     };
     final json = await _getJson('/v1/festivals/$festivalId/dates', params);
     return FestivalDatesResponseDto.fromJson(json);
+  }
+
+  /// Reverse-geocode GPS coordinates to the nearest city + IANA timezone.
+  /// Calls GET /v1/locations/resolve?lat=&lon=&language=
+  Future<LocationResolveResult> resolveLocation({
+    required double lat,
+    required double lon,
+    String language = 'en',
+  }) async {
+    final params = {
+      'lat': lat.toStringAsFixed(6),
+      'lon': lon.toStringAsFixed(6),
+      'language': language,
+    };
+    final json = await _getJson('/v1/locations/resolve', params);
+    return LocationResolveResult.fromJson(json);
   }
 
   Future<List<LocationSearchResult>> searchLocations({

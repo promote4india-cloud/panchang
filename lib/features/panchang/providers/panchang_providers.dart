@@ -60,8 +60,13 @@ final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((
       .where((item) => _isAuspiciousCategory(item.category))
       .map(
         (item) => PanchangMuhuratVm(
+          id: item.id,
           name: item.name,
           timeRange: _formatRange(item.start, item.end),
+          sanskritName: item.sanskritName,
+          devanagari: item.devanagari,
+          category: item.category,
+          period: item.period,
         ),
       )
       .toList();
@@ -69,8 +74,13 @@ final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((
       .where((item) => _isInauspiciousCategory(item.category))
       .map(
         (item) => PanchangMuhuratVm(
+          id: item.id,
           name: item.name,
           timeRange: _formatRange(item.start, item.end),
+          sanskritName: item.sanskritName,
+          devanagari: item.devanagari,
+          category: item.category,
+          period: item.period,
         ),
       )
       .toList();

@@ -139,6 +139,8 @@ class MuhuratBundleDto {
 class MuhuratWindowDto {
   final String id;
   final String name;
+  final String sanskritName;
+  final String devanagari;
   final String category;
   final String period;
   final String start;
@@ -147,6 +149,8 @@ class MuhuratWindowDto {
   MuhuratWindowDto({
     required this.id,
     required this.name,
+    required this.sanskritName,
+    required this.devanagari,
     required this.category,
     required this.period,
     required this.start,
@@ -157,10 +161,42 @@ class MuhuratWindowDto {
     return MuhuratWindowDto(
       id: json['id'] as String,
       name: json['name'] as String,
+      sanskritName: json['sanskrit_name'] as String? ?? '',
+      devanagari: json['sanskrit_devanagari'] as String? ?? '',
       category: json['category'] as String? ?? '',
       period: json['period'] as String? ?? '',
       start: json['start'] as String,
       end: json['end'] as String,
+    );
+  }
+}
+
+class MuhuratDetailDto extends MuhuratWindowDto {
+  final String? description;
+
+  MuhuratDetailDto({
+    required super.id,
+    required super.name,
+    required super.sanskritName,
+    required super.devanagari,
+    required super.category,
+    required super.period,
+    required super.start,
+    required super.end,
+    this.description,
+  });
+
+  factory MuhuratDetailDto.fromJson(Map<String, dynamic> json) {
+    return MuhuratDetailDto(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      sanskritName: json['sanskrit_name'] as String? ?? '',
+      devanagari: json['sanskrit_devanagari'] as String? ?? '',
+      category: json['category'] as String? ?? '',
+      period: json['period'] as String? ?? '',
+      start: json['start'] as String,
+      end: json['end'] as String,
+      description: json['description'] as String?,
     );
   }
 }
@@ -534,10 +570,23 @@ class PanchangDashboardVm {
 }
 
 class PanchangMuhuratVm {
+  final String id;
   final String name;
   final String timeRange;
+  final String sanskritName;
+  final String devanagari;
+  final String category; // 'auspicious' | 'inauspicious'
+  final String period;   // 'day' | 'night'
 
-  PanchangMuhuratVm({required this.name, required this.timeRange});
+  PanchangMuhuratVm({
+    required this.id,
+    required this.name,
+    required this.timeRange,
+    required this.sanskritName,
+    required this.devanagari,
+    required this.category,
+    required this.period,
+  });
 }
 
 class HoroscopeDailyDto {

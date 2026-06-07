@@ -58,7 +58,7 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '${state.activeDuration} Horoscope',
+            AppLocalizations.of(context)!.horoscopeTitle(state.activeDuration),
             style: TextStyle(fontFamily: 'Epilogue', fontSize: 28, fontWeight: FontWeight.bold, color: c.onSurface),
           ),
           const SizedBox(height: 8),
@@ -77,9 +77,9 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
                 decoration: BoxDecoration(color: c.subtleBg, borderRadius: BorderRadius.circular(12)),
                 child: Row(
                   children: [
-                    _buildTextTabButton(ref, c, state.activeDuration, AppLocalizations.of(context)!.durationDaily, 'Daily'),
-                    _buildTextTabButton(ref, c, state.activeDuration, AppLocalizations.of(context)!.durationWeekly, 'Weekly'),
-                    _buildTextTabButton(ref, c, state.activeDuration, AppLocalizations.of(context)!.durationMonthly, 'Monthly'),
+                    _buildTextTabButton(ref, c, state.activePeriod, AppLocalizations.of(context)!.durationDaily, 'daily'),
+                    _buildTextTabButton(ref, c, state.activePeriod, AppLocalizations.of(context)!.durationWeekly, 'weekly'),
+                    _buildTextTabButton(ref, c, state.activePeriod, AppLocalizations.of(context)!.durationMonthly, 'monthly'),
                   ],
                 ),
               ),
@@ -112,10 +112,10 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
     );
   }
 
-  Widget _buildTextTabButton(WidgetRef ref, AppColorsOf c, String activeDuration, String displayLabel, String internalKey) {
-    final bool isSelected = activeDuration == internalKey;
+  Widget _buildTextTabButton(WidgetRef ref, AppColorsOf c, String activePeriod, String displayLabel, String periodKey) {
+    final bool isSelected = activePeriod == periodKey;
     return GestureDetector(
-      onTap: () => ref.read(horoscopeProvider.notifier).handleDurationChange(internalKey),
+      onTap: () => ref.read(horoscopeProvider.notifier).handleDurationChange(displayLabel, periodKey),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
         decoration: BoxDecoration(color: isSelected ? c.primary : Colors.transparent, borderRadius: BorderRadius.circular(8)),
@@ -266,7 +266,7 @@ Widget _buildPredictionCard(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${state.selectedZodiac} Prediction',
+                        AppLocalizations.of(context)!.predictionTitle(state.selectedZodiac),
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,

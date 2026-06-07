@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:panchang_app/l10n/app_localizations.dart';
 
 // =========================================================================
 // NAVIGATION STATE MANAGER
@@ -95,6 +96,7 @@ class TopBarNotifier extends Notifier<TopBarState> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
+        final l = AppLocalizations.of(ctx)!;
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -108,9 +110,9 @@ class TopBarNotifier extends Notifier<TopBarState> {
                 ),
               ),
               const SizedBox(height: 16),
-              const Text(
-                'Select Language',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              Text(
+                l.selectLanguage,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               ...kSupportedLanguages.map((lang) {

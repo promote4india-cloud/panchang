@@ -430,6 +430,7 @@ async def _run_horoscope_prewarm(
     language: str,
     force: bool,
     auto_clean: bool,
+    auto_translate: bool,
     auto_deepdive: bool,
 ) -> None:
     from datetime import datetime
@@ -467,7 +468,7 @@ async def _run_horoscope_prewarm(
         flush=True,
     )
 
-    if not (auto_clean or auto_deepdive):
+    if not (auto_clean or auto_translate or auto_deepdive):
         return
 
     from backend.routers.llm import (
@@ -475,6 +476,7 @@ async def _run_horoscope_prewarm(
         LLMCleanRequest,
         _make_horoscope_runner,
         _make_deepdive_runner,
+        _make_horoscope_translate_runner,
     )
     from backend.services.llm import DEFAULT_MODEL, is_llm_enabled
 
@@ -497,6 +499,19 @@ async def _run_horoscope_prewarm(
             await asyncio.shield(hj.task)
         print(
             f"[horoscope-prewarm] horoscope clean done (status={hj.status})",
+            flush=True,
+        )
+
+    if auto_translate:
+        print("[horoscope-prewarm] Starting LLM translate/horoscope ...", flush=True)
+        tj = LLMJobManager.start(
+            category="horoscope-translate", model=DEFAULT_MODEL, dry_run=False,
+            runner=_make_horoscope_translate_runner(req),
+        )
+        if tj.task:
+            await asyncio.shield(tj.task)
+        print(
+            f"[horoscope-prewarm] horoscope translate done (status={tj.status})",
             flush=True,
         )
 
@@ -531,15 +546,19 @@ async def prewarm_horoscope(
         True,
         description="Run LLM clean/horoscope after all pages are fetched.",
     ),
+    auto_translate: bool = Query(
+        True,
+        description="Run LLM translate/horoscope after horoscope clean.",
+    ),
     auto_deepdive: bool = Query(
         False,
-        description="Run LLM clean/sign-deepdive after horoscope clean. Implies auto_clean.",
+        description="Run LLM clean/sign-deepdive after horoscope clean/translate. Implies auto_clean.",
     ),
 ):
     """
     Pre-warm horoscope predictions for all 12 signs and the given periods.
     Runs in the background; returns immediately with a summary.
-    Track LLM clean progress via GET /v1/admin/llm/jobs.
+    Track LLM clean/translation progress via GET /v1/admin/llm/jobs.
     """
     period_list = [p.strip() for p in periods.split(",") if p.strip()]
     invalid = [p for p in period_list if p not in _VALID_PERIODS]
@@ -554,7 +573,8 @@ async def prewarm_horoscope(
             periods=period_list,
             language=language,
             force=force,
-            auto_clean=auto_clean or auto_deepdive,
+            auto_clean=auto_clean or auto_deepdive or auto_translate,
+            auto_translate=auto_translate,
             auto_deepdive=auto_deepdive,
         )
     )
@@ -566,7 +586,8 @@ async def prewarm_horoscope(
         "periods": period_list,
         "language": language,
         "total_pages": len(SIGNS) * len(period_list),
-        "auto_clean": auto_clean or auto_deepdive,
+        "auto_clean": auto_clean or auto_deepdive or auto_translate,
+        "auto_translate": auto_translate,
         "auto_deepdive": auto_deepdive,
     }
 

@@ -61,3 +61,36 @@ class LocationSearchResult {
         .toString();
   }
 }
+
+/// Result from GET /v1/locations/resolve?lat=&lon=
+/// Used after a GPS fix to get the IANA timezone and nearest city label.
+class LocationResolveResult {
+  /// IANA timezone string (e.g. "Asia/Kolkata").
+  final String tz;
+
+  /// Human-readable label for the nearest city (e.g. "Mumbai, Maharashtra, India").
+  /// Null if no city was found within range (very remote area).
+  final String? displayLabel;
+
+  /// Raw lat/lon of the nearest city row in GeoNames (may differ slightly from GPS coords).
+  final double? cityLat;
+  final double? cityLon;
+
+  const LocationResolveResult({
+    required this.tz,
+    this.displayLabel,
+    this.cityLat,
+    this.cityLon,
+  });
+
+  factory LocationResolveResult.fromJson(Map<String, dynamic> json) {
+    final city = json['nearest_city'] as Map<String, dynamic>?;
+    return LocationResolveResult(
+      tz: json['tz'] as String? ?? 'Asia/Kolkata',
+      displayLabel: city?['display_label'] as String?,
+      cityLat: (city?['lat'] as num?)?.toDouble(),
+      cityLon: (city?['lon'] as num?)?.toDouble(),
+    );
+  }
+}
+

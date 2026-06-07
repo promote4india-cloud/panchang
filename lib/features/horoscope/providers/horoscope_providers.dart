@@ -8,23 +8,30 @@ import '../data/horoscope_cache.dart';
 import '../models/horoscope_models.dart';
 
 class HoroscopeState {
-  final String activeDuration; 
-  final String selectedZodiac; 
-  final bool isChartLoading;   
+  /// The localized display label shown in the UI tab (e.g. "Daily", "साप्ताहिक").
+  final String activeDuration;
+  /// The canonical API period key — always one of 'daily' | 'weekly' | 'monthly'.
+  /// Stored separately so it never needs to be derived from the translated label.
+  final String activePeriod;
+  final String selectedZodiac;
+  final bool isChartLoading;
 
   HoroscopeState({
     required this.activeDuration,
+    required this.activePeriod,
     required this.selectedZodiac,
     this.isChartLoading = false,
   });
 
   HoroscopeState copyWith({
     String? activeDuration,
+    String? activePeriod,
     String? selectedZodiac,
     bool? isChartLoading,
   }) {
     return HoroscopeState(
       activeDuration: activeDuration ?? this.activeDuration,
+      activePeriod: activePeriod ?? this.activePeriod,
       selectedZodiac: selectedZodiac ?? this.selectedZodiac,
       isChartLoading: isChartLoading ?? this.isChartLoading,
     );
@@ -36,12 +43,15 @@ class HoroscopeNotifier extends Notifier<HoroscopeState> {
   HoroscopeState build() {
     return HoroscopeState(
       activeDuration: 'Daily',
+      activePeriod: 'daily',
       selectedZodiac: zodiacLabelFor(UserConfig.zodiacSign),
     );
   }
 
-  void handleDurationChange(String duration) {
-    state = state.copyWith(activeDuration: duration);
+  /// [displayLabel] is the translated UI string (e.g. "साप्ताहिक").
+  /// [periodKey] is the invariant API key ('daily' | 'weekly' | 'monthly').
+  void handleDurationChange(String displayLabel, String periodKey) {
+    state = state.copyWith(activeDuration: displayLabel, activePeriod: periodKey);
   }
 
   void handleZodiacSelection(String zodiac) {
@@ -51,10 +61,10 @@ class HoroscopeNotifier extends Notifier<HoroscopeState> {
   Future<void> handleViewFullChartPressed() async {
     if (state.isChartLoading) return;
     state = state.copyWith(isChartLoading: true);
-    
+
     // Simulate an API data fetch cycle
     await Future.delayed(const Duration(seconds: 2));
-    
+
     state = state.copyWith(isChartLoading: false);
   }
 }
@@ -72,7 +82,8 @@ final horoscopeQueryProvider = Provider<HoroscopeQuery>((ref) {
   final langCode = ref.watch(localeProvider).languageCode;
   return HoroscopeQuery(
     sign: _normalizeSign(state.selectedZodiac),
-    period: _mapDurationToPeriod(state.activeDuration),
+    // Use activePeriod (canonical key) — never the translated display label
+    period: state.activePeriod,
     language: langCode,
     tz: UserConfig.timezone,
   );
@@ -115,15 +126,4 @@ void _prefetchOtherPeriods(
 }
 
 String _normalizeSign(String value) => value.trim().toLowerCase();
-
-String _mapDurationToPeriod(String value) {
-  switch (value.toLowerCase()) {
-    case 'weekly':
-      return 'weekly';
-    case 'monthly':
-      return 'monthly';
-    default:
-      return 'daily';
-  }
-}
 
