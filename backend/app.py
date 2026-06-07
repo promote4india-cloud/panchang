@@ -46,6 +46,8 @@ from backend.config import (
     FESTIVAL_SNAPSHOT_PREWARM_POINTS,
     FESTIVAL_SNAPSHOT_PREWARM_TZ,
     FESTIVAL_SNAPSHOT_PREWARM_YEARS,
+    HEARTBEAT_URL,
+    HEARTBEAT_INTERVAL,
 )
 from backend.services.db import ensure_content_schema, init_pool, close_pool
 from backend.services.festival_rules_seed import seed_festival_rules
@@ -64,6 +66,46 @@ from backend.routers.llm import router as llm_router
 ensure_database()           # GeoNames build (only on first run, CPU-only)
 
 log = logging.getLogger("app.prewarm")
+_hb_log = logging.getLogger("app.heartbeat")
+
+
+def _has_active_jobs() -> bool:
+    """Return True if any scraper or LLM background job is currently running."""
+    try:
+        from backend.services.scraper.jobs import JobManager
+        job = JobManager.current()
+        if job and job.status == "running":
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from backend.routers.llm import LLMJobManager
+        if any(j.status == "running" for j in LLMJobManager._jobs.values()):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+async def _heartbeat_loop(url: str, interval: int) -> None:
+    """Ping `url` every `interval` seconds — but only while a job is running.
+
+    Render free tier spins down after 15 min of no incoming HTTP traffic.
+    Long LLM translate/clean jobs run purely in the background, so this loop
+    keeps the process alive for exactly as long as it needs to.
+    """
+    import httpx
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        while True:
+            await asyncio.sleep(interval)
+            if not _has_active_jobs():
+                continue
+            try:
+                resp = await client.get(url)
+                _hb_log.debug("heartbeat %s → %s", url, resp.status_code)
+            except Exception as exc:  # noqa: BLE001
+                _hb_log.warning("heartbeat ping failed: %s", exc)
 
 
 def _parse_prewarm_points(raw: str) -> list[tuple[float, float]]:
@@ -161,6 +203,17 @@ async def lifespan(app: FastAPI):
     # --- Snapshot prewarm (background thread, non-blocking) --------------
     threading.Thread(target=_run_snapshot_prewarm, daemon=True).start()
 
+    # --- Heartbeat (keep Render free tier awake during long LLM jobs) ----
+    if HEARTBEAT_URL:
+        asyncio.create_task(_heartbeat_loop(HEARTBEAT_URL, HEARTBEAT_INTERVAL))
+        print(
+            f"[heartbeat] started — pinging {HEARTBEAT_URL} "
+            f"every {HEARTBEAT_INTERVAL}s",
+            flush=True,
+        )
+    else:
+        print("[heartbeat] disabled (HEARTBEAT_URL not set)", flush=True)
+
     yield  # ← app is now live and serving requests
 
     # --- Shutdown ---------------------------------------------------------
@@ -169,6 +222,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Panchang API", version="0.1.0", lifespan=lifespan)
+
+
+@app.get("/health", tags=["health"], include_in_schema=False)
+def health():
+    return {"status": "ok"}
+
 
 app.add_middleware(
     CORSMiddleware,

@@ -86,6 +86,26 @@ CORS_ALLOW_ORIGIN_REGEX: str | None = os.getenv(
 )
 
 # ---------------------------------------------------------------------------
+# Heartbeat — keep-alive ping for Render free tier
+# ---------------------------------------------------------------------------
+
+#: URL to GET on each heartbeat tick.  Defaults to <RENDER_EXTERNAL_URL>/health
+#: when running on Render (that env-var is injected automatically).
+#: Set to "" to disable.
+_render_base: str = os.getenv("RENDER_EXTERNAL_URL", "")
+HEARTBEAT_URL: str = os.getenv(
+    "HEARTBEAT_URL",
+    f"{_render_base}/health" if _render_base else "",
+)
+
+#: Seconds between heartbeat pings.  Render free tier sleeps after 15 min of
+#: inactivity, so 600 s (10 min) gives comfortable headroom.
+try:
+    HEARTBEAT_INTERVAL: int = max(60, int(os.getenv("HEARTBEAT_INTERVAL", "600")))
+except ValueError:
+    HEARTBEAT_INTERVAL = 600
+
+# ---------------------------------------------------------------------------
 # Festival snapshot prewarming
 # ---------------------------------------------------------------------------
 
