@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:panchang_app/l10n/app_localizations.dart';
 import '../../../config/user_config.dart';
 import '../../../constants/app_colors.dart';
 import '../../../constants/app_themes.dart';
@@ -32,8 +33,9 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     final manualLocationLabel =
         locationState.value?.label ?? UserConfig.locationLabel;
     final selectedThemeMode = ref.watch(themeModeProvider);
-    final appearanceLabel = _appearanceLabel(selectedThemeMode);
+    final appearanceLabel = _appearanceLabel(context, selectedThemeMode);
     final c = AppColorsOf(context);
+    final l = AppLocalizations.of(context)!;
 
     return SingleChildScrollView(
       // Clear bounds spacing allowance logic parameters for fixed bottom nav bar
@@ -88,7 +90,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Vedic Practitioner since 2018',
+                        l.vedicPractitioner,
                         style: AppThemes.bodySm.copyWith(
                           color: c.onSurfaceVariant,
                         ),
@@ -110,7 +112,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           const SizedBox(height: 24),
 
           // --- SECTION: LOCATION SETTINGS ---
-          _buildGroupHeader(context, 'Location'),
+          _buildGroupHeader(context, l.sectionLocation),
           const SizedBox(height: 8),
           Container(
             decoration: _groupContainerDecoration(c),
@@ -119,8 +121,8 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                 _buildToggleRow(
                   context,
                   icon: LucideIcons.locate,
-                  title: 'Automatic Detection',
-                  subtitle: 'Uses GPS for precise Muhurta',
+                  title: l.automaticDetection,
+                  subtitle: l.automaticDetectionSubtitle,
                   value: autoDetection,
                   onChanged: isLocationBusy
                       ? null
@@ -130,7 +132,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                 _buildNavigationRow(
                   context,
                   icon: LucideIcons.map,
-                  title: 'Manual Entry',
+                  title: l.manualEntry,
                   trailingText: _firstWord(manualLocationLabel),
                   onTap: _openManualLocationSearch,
                 ),
@@ -140,7 +142,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           const SizedBox(height: 24),
 
           // --- SECTION: REMINDERS SETTINGS ---
-          _buildGroupHeader(context, 'Reminders'),
+          _buildGroupHeader(context, l.sectionReminders),
           const SizedBox(height: 8),
           Container(
             decoration: _groupContainerDecoration(c),
@@ -149,8 +151,8 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                 _buildToggleRow(
                   context,
                   icon: LucideIcons.bell,
-                  title: 'Daily Rahu Kaal',
-                  subtitle: 'Alert 15 mins before start',
+                  title: l.dailyRahuKaal,
+                  subtitle: l.dailyRahuKaalSubtitle,
                   value: _dailyRahuKaalReminder,
                   onChanged: (val) =>
                       setState(() => _dailyRahuKaalReminder = val),
@@ -159,8 +161,8 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                 _buildToggleRow(
                   context,
                   icon: LucideIcons.bell,
-                  title: 'Important Festivals',
-                  subtitle: 'Notifications for major tithis',
+                  title: l.importantFestivals,
+                  subtitle: l.importantFestivalsSubtitle,
                   value: _importantFestivalsReminder,
                   onChanged: (val) =>
                       setState(() => _importantFestivalsReminder = val),
@@ -172,7 +174,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           const SizedBox(height: 24),
 
           // --- SECTION: PREFERENCES ---
-          _buildGroupHeader(context, 'Preferences'),
+          _buildGroupHeader(context, l.sectionPreferences),
           const SizedBox(height: 8),
           Container(
             decoration: _groupContainerDecoration(c),
@@ -181,17 +183,24 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                 _buildNavigationRow(
                   context,
                   icon: LucideIcons.languages,
-                  title: 'Language',
-                  trailingText: 'English',
+                  title: l.language,
+                  trailingText: kSupportedLanguages
+                      .firstWhere(
+                        (o) => o.code == ref.watch(localeProvider).languageCode,
+                        orElse: () => kSupportedLanguages.first,
+                      )
+                      .label,
                   showDivider: true,
-                  onTap: () {},
+                  onTap: () => ref
+                      .read(topBarProvider.notifier)
+                      .handleLanguagePressed(context, ref),
                 ),
                 _buildNavigationRow(
                   context,
                   icon: LucideIcons.moon,
-                  title: 'Appearance',
+                  title: l.appearance,
                   trailingText: appearanceLabel,
-                  onTap: () => _showAppearanceDialog(),
+                  onTap: () => _showAppearanceDialog(context, l),
                 ),
               ],
             ),
@@ -205,7 +214,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
               GestureDetector(
                 onTap: () {},
                 child: Text(
-                  'Privacy Policy',
+                  l.privacyPolicy,
                   style: AppThemes.labelMd.copyWith(
                     color: c.primaryContainer,
                   ),
@@ -221,7 +230,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
               GestureDetector(
                 onTap: () {},
                 child: Text(
-                  'Terms of Service',
+                  l.termsOfService,
                   style: AppThemes.labelMd.copyWith(
                     color: c.primaryContainer,
                   ),
@@ -231,7 +240,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Vedic Panchang v2.4.1 — Alignment with the Cosmos',
+            l.appVersion,
             textAlign: TextAlign.center,
             style: AppThemes.bodySm.copyWith(
               color: c.onSurfaceVariant.withOpacity(0.6),
@@ -276,19 +285,20 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
     );
   }
 
-  String _appearanceLabel(ThemeMode mode) {
+  String _appearanceLabel(BuildContext context, ThemeMode mode) {
+    final l = AppLocalizations.of(context)!;
     switch (mode) {
       case ThemeMode.dark:
-        return 'Dark Mode';
+        return l.darkMode;
       case ThemeMode.light:
-        return 'Light Mode';
+        return l.lightMode;
       case ThemeMode.system:
       default:
-        return 'System Default';
+        return l.systemDefault;
     }
   }
 
-  Future<void> _showAppearanceDialog() async {
+  Future<void> _showAppearanceDialog(BuildContext context, AppLocalizations l) async {
     final currentMode = ref.read(themeModeProvider);
     ThemeMode selectedMode = currentMode;
 
@@ -298,14 +308,14 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              title: const Text('Appearance'),
+              title: Text(l.appearance),
               contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   RadioListTile<ThemeMode>(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Light Mode'),
+                    title: Text(l.lightMode),
                     value: ThemeMode.light,
                     groupValue: selectedMode,
                     onChanged: (value) {
@@ -316,7 +326,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                   ),
                   RadioListTile<ThemeMode>(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Dark Mode'),
+                    title: Text(l.darkMode),
                     value: ThemeMode.dark,
                     groupValue: selectedMode,
                     onChanged: (value) {
@@ -327,7 +337,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                   ),
                   RadioListTile<ThemeMode>(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('System Default'),
+                    title: Text(l.systemDefault),
                     value: ThemeMode.system,
                     groupValue: selectedMode,
                     onChanged: (value) {
@@ -341,7 +351,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(l.cancel),
                 ),
               ],
             );
@@ -519,8 +529,9 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setState) {
+            final l = AppLocalizations.of(context)!;
             return AlertDialog(
-              title: const Text('Search Location'),
+              title: Text(l.searchLocation),
               content: SizedBox(
                 width: double.maxFinite,
                 child: Column(
@@ -530,9 +541,9 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                       controller: controller,
                       focusNode: focusNode,
                       autofocus: true,
-                      decoration: const InputDecoration(
-                        hintText: 'Type at least 3 characters',
-                        prefixIcon: Icon(LucideIcons.search, size: 18),
+                      decoration: InputDecoration(
+                        hintText: l.searchHint,
+                        prefixIcon: const Icon(LucideIcons.search, size: 18),
                       ),
                       onChanged: (value) => runSearch(value, setState),
                     ),
@@ -543,16 +554,16 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
                         child: Center(child: CircularProgressIndicator()),
                       )
                     else if (query.length < 3)
-                      const SizedBox(
+                      SizedBox(
                         height: 120,
                         child: Center(
-                          child: Text('Enter 3 or more characters.'),
+                          child: Text(l.enterMoreChars),
                         ),
                       )
                     else if (results.isEmpty)
-                      const SizedBox(
+                      SizedBox(
                         height: 120,
-                        child: Center(child: Text('No locations found.')),
+                        child: Center(child: Text(l.noLocationsFound)),
                       )
                     else
                       SizedBox(
@@ -586,7 +597,7 @@ class _SettingsViewState extends ConsumerState<SettingsView> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Close'),
+                  child: Text(l.close),
                 ),
               ],
             );

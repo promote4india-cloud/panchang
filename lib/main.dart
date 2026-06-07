@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:panchang_app/l10n/app_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:panchang_app/constants/app_themes.dart';
@@ -28,11 +30,35 @@ class VedicPanchangApp extends StatelessWidget {
     return Consumer(
       builder: (context, ref, _) {
         final themeMode = ref.watch(themeModeProvider);
+        final locale = ref.watch(localeProvider);
 
         return MaterialApp(
           debugShowCheckedModeBanner: false,
           title: 'Vedic Panchang',
           themeMode: themeMode,
+          // ── Localization ──────────────────────────────────────────────
+          locale: locale,
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: const [
+            Locale('en'),
+            Locale('hi'),
+            Locale('bn'),
+            Locale('ta'),
+            Locale('te'),
+            Locale('mr'),
+            Locale('gu'),
+            Locale('kn'),
+            Locale('ml'),
+            Locale('pa'),
+            Locale('sa'),
+            Locale('or'),
+          ],
+          // ─────────────────────────────────────────────────────────────
           theme: ThemeData(
             useMaterial3: true,
             brightness: Brightness.light,
@@ -65,14 +91,24 @@ class DashboardPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l = AppLocalizations.of(context)!;
     final activeTabIndex = ref.watch(navigationProvider);
     // Watched top bar data changes
     final topBarState = ref.watch(topBarProvider);
-    final appBarTitle = _titleForTab(activeTabIndex);
+    final appBarTitle = _titleForTab(l, activeTabIndex);
+
+    // Derive short code label from current locale
+    final currentLangCode = ref.watch(localeProvider).languageCode;
+    final langShort = kSupportedLanguages
+        .firstWhere(
+          (o) => o.code == currentLangCode,
+          orElse: () => kSupportedLanguages.first,
+        )
+        .short;
 
     final List<Widget> screens = [
-      const PanchangDashboardView(), 
-      const HoroscopeView(),         
+      const PanchangDashboardView(),
+      const HoroscopeView(),
       const FestivalsView(),
       const SettingsView(),
     ];
@@ -86,7 +122,7 @@ class DashboardPage extends ConsumerWidget {
         elevation: 0,
         surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          icon: Icon(LucideIcons.menu, color: c.primaryContainer), 
+          icon: Icon(LucideIcons.menu, color: c.primaryContainer),
           onPressed: () => ref.read(topBarProvider.notifier).handleMenuPressed(context),
         ),
         title: Column(
@@ -100,13 +136,15 @@ class DashboardPage extends ConsumerWidget {
         ),
         centerTitle: true,
         actions: [
-          // Dynamic Language Selection Toggle Button Context
+          // Language Selection Button — shows full picker bottom sheet
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: c.primaryContainer),
-            onPressed: () => ref.read(topBarProvider.notifier).handleLanguagePressed(),
+            onPressed: () => ref
+                .read(topBarProvider.notifier)
+                .handleLanguagePressed(context, ref),
             icon: Icon(LucideIcons.languages, size: 18, color: c.primaryContainer),
             label: Text(
-              topBarState.selectedLanguage == 'English' ? 'EN' : 'HI',
+              langShort,
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: c.primaryContainer),
             ),
           ),
@@ -153,10 +191,10 @@ class DashboardPage extends ConsumerWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildInteractiveNavItem(context, ref, activeTabIndex, 0, LucideIcons.sparkles, 'Panchang'),
-              _buildInteractiveNavItem(context, ref, activeTabIndex, 1, LucideIcons.star, 'Horoscope'),
-              _buildInteractiveNavItem(context, ref, activeTabIndex, 2, LucideIcons.calendar, 'Festivals'),
-              _buildInteractiveNavItem(context, ref, activeTabIndex, 3, LucideIcons.settings, 'Settings'),
+              _buildInteractiveNavItem(context, ref, activeTabIndex, 0, LucideIcons.sparkles, l.navPanchang),
+              _buildInteractiveNavItem(context, ref, activeTabIndex, 1, LucideIcons.star, l.navHoroscope),
+              _buildInteractiveNavItem(context, ref, activeTabIndex, 2, LucideIcons.calendar, l.navFestivals),
+              _buildInteractiveNavItem(context, ref, activeTabIndex, 3, LucideIcons.settings, l.navSettings),
             ],
           ),
         ),
@@ -168,9 +206,6 @@ class DashboardPage extends ConsumerWidget {
     final bool isActive = activeIndex == index;
     final c = AppColorsOf(context);
 
-    // Fixed inner height so the nav bar never resizes during transitions.
-    // Inactive Column: icon(22) + gap(2) + text(~17) ≈ 41 → use 46 for
-    // comfortable breathing room on both layouts.
     const double itemHeight = 46;
 
     return InkWell(
@@ -228,17 +263,13 @@ class DashboardPage extends ConsumerWidget {
     );
   }
 
-  String _titleForTab(int index) {
+  String _titleForTab(AppLocalizations l, int index) {
     switch (index) {
-      case 1:
-        return 'Horoscope';
-      case 2:
-        return 'Festivals';
-      case 3:
-        return 'Settings';
+      case 1: return l.navHoroscope;
+      case 2: return l.navFestivals;
+      case 3: return l.navSettings;
       case 0:
-      default:
-        return 'Vedic Panchang';
+      default: return l.appTitle;
     }
   }
 }

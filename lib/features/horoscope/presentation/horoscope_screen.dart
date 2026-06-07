@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:panchang_app/l10n/app_localizations.dart';
 import '../../../constants/app_colors.dart';
 import '../../../assset/zodiac_icons.dart';
 import '../../horoscope/providers/horoscope_providers.dart';
@@ -62,7 +63,7 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Align your day with cosmic wisdom. Predictions based on the Vedic Lunar Calendar.',
+            AppLocalizations.of(context)!.horoscopeSubtitle,
             style: TextStyle(fontSize: 16, color: c.onSurfaceVariant, height: 1.4),
           ),
           const SizedBox(height: 20),
@@ -76,9 +77,9 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
                 decoration: BoxDecoration(color: c.subtleBg, borderRadius: BorderRadius.circular(12)),
                 child: Row(
                   children: [
-                    _buildTextTabButton(ref, c, state.activeDuration, 'Daily'),
-                    _buildTextTabButton(ref, c, state.activeDuration, 'Weekly'),
-                    _buildTextTabButton(ref, c, state.activeDuration, 'Monthly'),
+                    _buildTextTabButton(ref, c, state.activeDuration, AppLocalizations.of(context)!.durationDaily, 'Daily'),
+                    _buildTextTabButton(ref, c, state.activeDuration, AppLocalizations.of(context)!.durationWeekly, 'Weekly'),
+                    _buildTextTabButton(ref, c, state.activeDuration, AppLocalizations.of(context)!.durationMonthly, 'Monthly'),
                   ],
                 ),
               ),
@@ -111,15 +112,15 @@ class _HoroscopeViewState extends ConsumerState<HoroscopeView> {
     );
   }
 
-  Widget _buildTextTabButton(WidgetRef ref, AppColorsOf c, String activeDuration, String targetText) {
-    final bool isSelected = activeDuration == targetText;
+  Widget _buildTextTabButton(WidgetRef ref, AppColorsOf c, String activeDuration, String displayLabel, String internalKey) {
+    final bool isSelected = activeDuration == internalKey;
     return GestureDetector(
-      onTap: () => ref.read(horoscopeProvider.notifier).handleDurationChange(targetText),
+      onTap: () => ref.read(horoscopeProvider.notifier).handleDurationChange(internalKey),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
         decoration: BoxDecoration(color: isSelected ? c.primary : Colors.transparent, borderRadius: BorderRadius.circular(8)),
         child: Text(
-          targetText,
+          displayLabel,
           style: TextStyle(color: isSelected ? Colors.white : c.onSurfaceVariant, fontWeight: FontWeight.bold, fontSize: 14),
         ),
       ),
@@ -227,7 +228,7 @@ Widget _buildPredictionCard(
         final dateLabel = data.dateLabel ?? '';
         final prediction = data.prediction?.trim().isNotEmpty == true
             ? data.prediction!.trim()
-            : 'No horoscope available right now.';
+            : AppLocalizations.of(context)!.noHoroscopeAvailable;
         final duration = state.activeDuration.toLowerCase();
         final showRatings = duration == 'daily';
         final showCategories = duration == 'monthly';
@@ -424,11 +425,11 @@ List<Widget> _buildCategoryRows(BuildContext context, Map<String, dynamic>? cate
     rows.add(const SizedBox(height: 12));
   }
 
-  addRow(LucideIcons.heart, 'Love', 'love');
-  addRow(LucideIcons.briefcase, 'Career', 'career');
-  addRow(LucideIcons.piggyBank, 'Finance', 'finance');
-  addRow(LucideIcons.activity, 'Health', 'health');
-  addRow(LucideIcons.users, 'Family', 'family');
+  addRow(LucideIcons.heart, AppLocalizations.of(context)!.categoryLove, 'love');
+  addRow(LucideIcons.briefcase, AppLocalizations.of(context)!.categoryCareer, 'career');
+  addRow(LucideIcons.piggyBank, AppLocalizations.of(context)!.categoryFinance, 'finance');
+  addRow(LucideIcons.activity, AppLocalizations.of(context)!.categoryHealth, 'health');
+  addRow(LucideIcons.users, AppLocalizations.of(context)!.categoryFamily, 'family');
 
   if (rows.isNotEmpty) {
     rows.removeLast();

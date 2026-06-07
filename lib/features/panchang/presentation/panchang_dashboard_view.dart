@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:panchang_app/l10n/app_localizations.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../constants/app_colors.dart';
@@ -15,6 +16,7 @@ class PanchangDashboardView extends ConsumerWidget {
 
 	@override
 	Widget build(BuildContext context, WidgetRef ref) {
+		final l = AppLocalizations.of(context)!;
 		final dashboard = ref.watch(panchangDashboardProvider);
 		final spiritualTip = ref.watch(spiritualTipProvider);
 
@@ -61,7 +63,7 @@ class PanchangDashboardView extends ConsumerWidget {
 							children: [
 								Expanded(
 									child: _InfoTile(
-										title: 'Tithi',
+										title: l.tithi,
 										value: vm.tithiLabel,
 										icon: LucideIcons.moon,
 									),
@@ -69,7 +71,7 @@ class PanchangDashboardView extends ConsumerWidget {
 								const SizedBox(width: 12),
 								Expanded(
 									child: _InfoTile(
-										title: 'Sunrise',
+										title: l.sunrise,
 										value: vm.sunriseLabel,
 										icon: LucideIcons.sun,
 									),
@@ -81,7 +83,7 @@ class PanchangDashboardView extends ConsumerWidget {
 							children: [
 								Expanded(
 									child: _InfoTile(
-										title: 'Nakshatra',
+										title: l.nakshatra,
 										value: vm.nakshatraLabel,
 										icon: LucideIcons.sparkles,
 									),
@@ -89,7 +91,7 @@ class PanchangDashboardView extends ConsumerWidget {
 								const SizedBox(width: 12),
 								Expanded(
 									child: _InfoTile(
-										title: 'Sunset',
+										title: l.sunset,
 										value: vm.sunsetLabel,
 										icon: LucideIcons.moon,
 									),
@@ -98,27 +100,27 @@ class PanchangDashboardView extends ConsumerWidget {
 						),
 						const SizedBox(height: 20),
 						Text(
-							'Muhurat Timings',
+							l.muhuratTimings,
 							style: AppThemes.headlineSm.copyWith(
 								color: AppColorsOf(context).onSurface,
 							),
 						),
 						const SizedBox(height: 10),
 						_MuhuratScroller(
-							title: 'Auspicious',
+							title: l.auspicious,
 							items: vm.auspiciousMuhurats,
 							isPositive: true,
 						),
 						const SizedBox(height: 12),
 						_MuhuratScroller(
-							title: 'Inauspicious',
+							title: l.inauspicious,
 							items: vm.inauspiciousMuhurats,
 							isPositive: false,
 						),
 						const SizedBox(height: 22),
 						_SectionHeader(
-							title: 'Daily Rashifal',
-							actionText: 'View All',
+							title: l.dailyRashifal,
+							actionText: l.viewAll,
 							onActionTap: () => ref.read(navigationProvider.notifier).changeTab(1),
 						),
 						const SizedBox(height: 10),
@@ -128,12 +130,12 @@ class PanchangDashboardView extends ConsumerWidget {
 							symbol: vm.rashifalSymbol,
 						),
 						const SizedBox(height: 22),
-						_SectionHeader(title: 'Upcoming Events'),
+						_SectionHeader(title: l.upcomingEvents),
 						const SizedBox(height: 10),
 						_UpcomingEventCard(
 							dateLabel: vm.upcomingDateLabel,
 							name: vm.upcomingName,
-							cta: 'Set Reminder',
+							cta: l.setReminder,
 						),
 						const SizedBox(height: 18),
 						_SpiritualTipCard(spiritualTip: spiritualTip),
@@ -183,7 +185,7 @@ class _FestivalCard extends StatelessWidget {
 							crossAxisAlignment: CrossAxisAlignment.start,
 							children: [
 								Text(
-									'Festival Today',
+									AppLocalizations.of(context)!.festivalToday,
 									style: AppThemes.bodySm.copyWith(color: c.onSurfaceVariant),
 								),
 								const SizedBox(height: 4),
@@ -568,7 +570,7 @@ class _UpcomingEventCard extends StatelessWidget {
 								),
 								const SizedBox(height: 4),
 								Text(
-									'Vrat and Puja Vidhi',
+									AppLocalizations.of(context)!.vratAndPujaVidhi,
 									style: AppThemes.bodySm.copyWith(color: c.onSurfaceVariant),
 								),
 							],
@@ -631,7 +633,7 @@ class _SpiritualTipCard extends StatelessWidget {
 									crossAxisAlignment: CrossAxisAlignment.start,
 									mainAxisSize: MainAxisSize.min,
 									children: [
-										const Row(
+										Row(
 											children: [
 												Icon(
 													LucideIcons.sparkles,
@@ -640,7 +642,7 @@ class _SpiritualTipCard extends StatelessWidget {
 												),
 												SizedBox(width: 8),
 												Text(
-													'Spiritual Tip',
+													AppLocalizations.of(context)!.spiritualTip,
 													style: TextStyle(
 														color: Colors.white,
 														fontSize: 16,
@@ -668,41 +670,41 @@ class _SpiritualTipCard extends StatelessWidget {
 										child: CircularProgressIndicator(color: Colors.white),
 									),
 								),
-								error: (_, __) => const Column(
-									crossAxisAlignment: CrossAxisAlignment.start,
-									mainAxisSize: MainAxisSize.min,
+								error: (_, __) => Column(
+							crossAxisAlignment: CrossAxisAlignment.start,
+							mainAxisSize: MainAxisSize.min,
+							children: [
+								Row(
 									children: [
-										Row(
-											children: [
-												Icon(
-													LucideIcons.sparkles,
-													color: Colors.white,
-													size: 20,
-												),
-												SizedBox(width: 8),
-												Text(
-													'Spiritual Tip',
-													style: TextStyle(
-														color: Colors.white,
-														fontSize: 16,
-														fontWeight: FontWeight.bold,
-														fontFamily: 'Epilogue',
-													),
-												),
-											],
+										const Icon(
+											LucideIcons.sparkles,
+											color: Colors.white,
+											size: 20,
 										),
-										SizedBox(height: 6),
+										const SizedBox(width: 8),
 										Text(
-											'Practice gratitude and keep your routine steady this month.',
-											style: TextStyle(
+											AppLocalizations.of(context)!.spiritualTip,
+											style: const TextStyle(
 												color: Colors.white,
-												fontSize: 13,
-												height: 1.3,
-												fontFamily: 'Manrope',
+												fontSize: 16,
+												fontWeight: FontWeight.bold,
+												fontFamily: 'Epilogue',
 											),
 										),
 									],
 								),
+								const SizedBox(height: 6),
+								Text(
+									AppLocalizations.of(context)!.spiritualTipFallback,
+									style: const TextStyle(
+										color: Colors.white,
+										fontSize: 13,
+										height: 1.3,
+										fontFamily: 'Manrope',
+									),
+								),
+							],
+						),
 							),
 						),
 					],
@@ -730,7 +732,7 @@ class _ErrorState extends StatelessWidget {
 						Icon(LucideIcons.alertTriangle, color: c.error, size: 32),
 						const SizedBox(height: 12),
 						Text(
-							'Unable to load Panchang data',
+							AppLocalizations.of(context)!.unableToLoadPanchang,
 							style: AppThemes.headlineSm.copyWith(fontSize: 16, color: c.onSurface),
 						),
 						const SizedBox(height: 6),
@@ -747,7 +749,7 @@ class _ErrorState extends StatelessWidget {
 								foregroundColor: Colors.white,
 							),
 							child: Text(
-								'Retry',
+								AppLocalizations.of(context)!.retry,
 								style: AppThemes.labelMd.copyWith(color: Colors.white),
 							),
 						),

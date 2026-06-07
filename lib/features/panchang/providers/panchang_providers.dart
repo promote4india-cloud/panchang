@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../config/app_config.dart';
 import '../../../config/user_config.dart';
 import '../../../assset/zodiac_icons.dart';
+import '../../../providers/app_providers.dart';
 import '../../../providers/user_location_provider.dart';
 import '../data/panchang_api.dart';
 import '../models/panchang_models.dart';
@@ -13,11 +14,13 @@ final panchangApiProvider = Provider<PanchangApiClient>((ref) {
 
 final dashboardQueryProvider = Provider<DashboardQuery>((ref) {
   final location = ref.watch(userLocationProvider).value;
+  // Use selected locale code so all API calls refresh when language changes
+  final langCode = ref.watch(localeProvider).languageCode;
   return DashboardQuery(
     lat: location?.latitude ?? UserConfig.latitude,
     lon: location?.longitude ?? UserConfig.longitude,
     tz: location?.timezone ?? UserConfig.timezone,
-    language: UserConfig.language,
+    language: langCode,
   );
 });
 
@@ -31,7 +34,7 @@ final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((
     api.fetchPanchangToday(query),
     api.fetchMuhurat(query),
     api.fetchFestivalsToday(query),
-    api.fetchUpcomingFestivals(query),
+    api.fetchUpcomingFestivals(query, window: '30d'),
     api.fetchDailyHoroscope(UserConfig.zodiacSign, query),
   ]);
 
@@ -44,8 +47,13 @@ final panchangDashboardProvider = FutureProvider<PanchangDashboardVm>((
   final visibleToday = festivalsToday.festivals
       .where((item) => !_isIslamicType(item.type))
       .toList();
+  final _now = DateTime.now();
   final visibleUpcoming = upcoming.items
       .where((item) => !_isIslamicType(item.type))
+      .where((item) {
+        final d = DateTime.tryParse(item.date);
+        return d != null && d.year == _now.year && d.month == _now.month;
+      })
       .toList();
 
   final auspiciousList = muhurat.muhurats

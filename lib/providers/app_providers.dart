@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 // =========================================================================
-// ADDED: NAVIGATION TIMING & TAB STATE MANAGER
+// NAVIGATION STATE MANAGER
 // =========================================================================
 class NavigationNotifier extends Notifier<int> {
   @override
@@ -15,6 +15,47 @@ class NavigationNotifier extends Notifier<int> {
 
 final navigationProvider = NotifierProvider<NavigationNotifier, int>(() {
   return NavigationNotifier();
+});
+
+// =========================================================================
+// LOCALE / LANGUAGE STATE MANAGER
+// Maps backend language codes (en, hi, bn, …) to Flutter Locale objects.
+// =========================================================================
+
+/// All language codes supported by both the backend and the UI.
+const List<_LangOption> kSupportedLanguages = [
+  _LangOption('en', 'EN', 'English'),
+  _LangOption('hi', 'HI', 'हिन्दी'),
+  _LangOption('bn', 'BN', 'বাংলা'),
+  _LangOption('ta', 'TA', 'தமிழ்'),
+  _LangOption('te', 'TE', 'తెలుగు'),
+  _LangOption('mr', 'MR', 'मराठी'),
+  _LangOption('gu', 'GU', 'ગુજરાતી'),
+  _LangOption('kn', 'KN', 'ಕನ್ನಡ'),
+  _LangOption('ml', 'ML', 'മലയാളം'),
+  _LangOption('pa', 'PA', 'ਪੰਜਾਬੀ'),
+  _LangOption('sa', 'SA', 'संस्कृत'),
+  _LangOption('or', 'OR', 'ଓଡ଼ିଆ'),
+];
+
+class _LangOption {
+  final String code;   // Backend/ARB code
+  final String short;  // Button label (2–3 chars)
+  final String label;  // Full name shown in picker
+  const _LangOption(this.code, this.short, this.label);
+}
+
+class LocaleNotifier extends Notifier<Locale> {
+  @override
+  Locale build() => const Locale('en');
+
+  void setLocale(Locale locale) => state = locale;
+
+  void setByCode(String code) => state = Locale(code);
+}
+
+final localeProvider = NotifierProvider<LocaleNotifier, Locale>(() {
+  return LocaleNotifier();
 });
 
 // =========================================================================
@@ -45,10 +86,61 @@ class TopBarNotifier extends Notifier<TopBarState> {
     // Logic for side-drawer goes here
   }
 
-  // --- LANGUAGE ONPRESSED ---
-  void handleLanguagePressed() {
-    final nextLang = state.selectedLanguage == 'English' ? 'Hindi' : 'English';
-    state = state.copyWith(selectedLanguage: nextLang);
+  /// Shows a bottom-sheet language picker and updates both the locale
+  /// provider and [UserConfig] so every API call re-fires in the new language.
+  void handleLanguagePressed(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Select Language',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              ...kSupportedLanguages.map((lang) {
+                final currentCode = ref.read(localeProvider).languageCode;
+                final isSelected = currentCode == lang.code;
+                return ListTile(
+                  leading: Text(
+                    lang.short,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: isSelected ? Theme.of(ctx).colorScheme.primary : null,
+                    ),
+                  ),
+                  title: Text(lang.label),
+                  trailing: isSelected
+                      ? Icon(Icons.check, color: Theme.of(ctx).colorScheme.primary)
+                      : null,
+                  onTap: () {
+                    ref.read(localeProvider.notifier).setByCode(lang.code);
+                    state = state.copyWith(selectedLanguage: lang.label);
+                    Navigator.of(ctx).pop();
+                  },
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
   }
 }
 
