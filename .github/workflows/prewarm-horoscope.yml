@@ -31,7 +31,7 @@ jobs:
       PERIODS: ${{ github.event.inputs.periods || 'daily,weekly,monthly' }}
       FORCE: ${{ github.event.inputs.force || 'false' }}
       POLL_TIMEOUT_SECONDS: "1500"                 # 25 min budget for scrape+clean+translate
-      POLL_INTERVAL_SECONDS: "20"
+      POLL_INTERVAL_SECONDS: "60"
     steps:
       - name: Trigger prewarm and wait for completion
         run: |
