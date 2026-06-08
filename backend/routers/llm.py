@@ -1117,7 +1117,8 @@ def _make_horoscope_translate_runner(req: LLMCleanRequest):
         try:
             sql = """
                 SELECT sign, period, language, period_key, date_label,
-                       prediction, love, career, finance, health, family, advice, source_url
+                       prediction, love, career, finance, health, family, advice,
+                       ratings_json, source_url
                 FROM horoscope_predictions
                 WHERE language = 'en'
                   AND (
@@ -1206,24 +1207,27 @@ def _make_horoscope_translate_runner(req: LLMCleanRequest):
                             INSERT INTO horoscope_predictions
                                 (sign, period, language, period_key, date_label,
                                  prediction, love, career, finance, health, family, advice,
-                                 source_url, llm_cleaned_at)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                                 ratings_json, source_url, llm_cleaned_at)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
                             ON CONFLICT (sign, period, language, period_key) DO UPDATE SET
-                                date_label  = COALESCE(excluded.date_label, horoscope_predictions.date_label),
-                                prediction  = excluded.prediction,
-                                love        = excluded.love,
-                                career      = excluded.career,
-                                finance     = excluded.finance,
-                                health      = excluded.health,
-                                family      = excluded.family,
-                                advice      = excluded.advice,
+                                date_label   = COALESCE(excluded.date_label, horoscope_predictions.date_label),
+                                prediction   = excluded.prediction,
+                                love         = excluded.love,
+                                career       = excluded.career,
+                                finance      = excluded.finance,
+                                health       = excluded.health,
+                                family       = excluded.family,
+                                advice       = excluded.advice,
+                                ratings_json = excluded.ratings_json,
                                 llm_cleaned_at = NOW()
                             """,
                             (
                                 row["sign"], row["period"], lang, row["period_key"], row.get("date_label"),
                                 c.get("prediction"), c.get("love"), c.get("career"),
                                 c.get("finance"), c.get("health"), c.get("family"), c.get("advice"),
-                                row.get("source_url"),
+                                # ratings are numeric scores with fixed English keys — copy
+                                # the English row's JSON verbatim, never send it to the LLM.
+                                row.get("ratings_json"), row.get("source_url"),
                             ),
                         )
                         written_this_batch += 1

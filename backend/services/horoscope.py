@@ -236,6 +236,12 @@ def _apply_clean_translate(en_row: dict, lang_map: dict[str, dict], key: str) ->
       - others → UPSERT a per-language row
     """
     sign, period = en_row["sign"], en_row["period"]
+    # Ratings are numeric scores with fixed English keys — not translated, just
+    # copied to every language row. _select() parsed them into a dict; re-serialize.
+    ratings_json = (
+        json.dumps(en_row["ratings"], separators=(",", ":"))
+        if en_row.get("ratings") else None
+    )
     conn = connect_rw()
     try:
         for lang, fields in lang_map.items():
@@ -270,17 +276,18 @@ def _apply_clean_translate(en_row: dict, lang_map: dict[str, dict], key: str) ->
                     INSERT INTO horoscope_predictions
                         (sign, period, language, period_key, date_label,
                          prediction, love, career, finance, health, family, advice,
-                         source_url, llm_cleaned_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                         ratings_json, source_url, llm_cleaned_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
                     ON CONFLICT (sign, period, language, period_key) DO UPDATE SET
-                        date_label  = COALESCE(excluded.date_label, horoscope_predictions.date_label),
-                        prediction  = excluded.prediction,
-                        love        = excluded.love,
-                        career      = excluded.career,
-                        finance     = excluded.finance,
-                        health      = excluded.health,
-                        family      = excluded.family,
-                        advice      = excluded.advice,
+                        date_label   = COALESCE(excluded.date_label, horoscope_predictions.date_label),
+                        prediction   = excluded.prediction,
+                        love         = excluded.love,
+                        career       = excluded.career,
+                        finance      = excluded.finance,
+                        health       = excluded.health,
+                        family       = excluded.family,
+                        advice       = excluded.advice,
+                        ratings_json = excluded.ratings_json,
                         llm_cleaned_at = NOW()
                     """,
                     (
@@ -288,7 +295,7 @@ def _apply_clean_translate(en_row: dict, lang_map: dict[str, dict], key: str) ->
                         fields.get("prediction"), fields.get("love"), fields.get("career"),
                         fields.get("finance"), fields.get("health"), fields.get("family"),
                         fields.get("advice"),
-                        en_row.get("source_url"),
+                        ratings_json, en_row.get("source_url"),
                     ),
                 )
         conn.commit()
