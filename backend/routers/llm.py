@@ -43,6 +43,7 @@ from backend.services.content_cleaner import (
     clean_horoscope_batch,
     clean_muhurat_batch,
     translate_festival_batch,
+    translate_horoscope_batch,
     translate_muhurat_batch,
 )
 from backend.services.db import connect_ro, connect_rw
@@ -96,8 +97,8 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 
 class LLMCleanRequest(BaseModel):
-    batch_size: int = Field(10, ge=1, le=20, description="Records per API call")
-    rpm_limit: int = Field(30, ge=1, le=60, description="Max Groq calls per minute")
+    batch_size: int = Field(3, ge=1, le=20, description="Records per API call")
+    rpm_limit: int = Field(30, ge=1, le=60, description="Max LLM calls per minute")
     language: Optional[str] = Field(
         None,
         description="Filter by language code e.g. 'en', 'hi'. Leave empty for all.",
@@ -1108,6 +1109,136 @@ def _make_muhurat_translate_runner(req: LLMCleanRequest):
     return _run
 
 
+def _make_horoscope_translate_runner(req: LLMCleanRequest):
+    async def _run(job: LLMJob) -> None:
+        limiter = RpmLimiter(req.rpm_limit)
+
+        conn = connect_ro()
+        try:
+            sql = """
+                SELECT sign, period, language, period_key, date_label,
+                       prediction, love, career, finance, health, family, advice, source_url
+                FROM horoscope_predictions
+                WHERE language = 'en'
+                  AND (
+                    prediction IS NOT NULL OR love IS NOT NULL OR
+                    career IS NOT NULL OR finance IS NOT NULL OR
+                    health IS NOT NULL OR family IS NOT NULL OR
+                    advice IS NOT NULL
+                  )
+            """
+            params: list[Any] = []
+            if not req.force:
+                sql += """
+                  AND NOT EXISTS (
+                    SELECT 1 FROM horoscope_predictions hp2
+                    WHERE hp2.sign = horoscope_predictions.sign
+                      AND hp2.period = horoscope_predictions.period
+                      AND hp2.period_key = horoscope_predictions.period_key
+                      AND hp2.language != 'en'
+                  )
+                """
+            if req.limit:
+                sql += f" LIMIT {req.limit}"
+            rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+        finally:
+            conn.close()
+
+        job.counters["fetched"] = len(rows)
+        if not rows:
+            _cprint("WARN", job.id,
+                    "No English horoscope rows pending translation "
+                    f"(force={req.force}). Run clean/horoscope first, "
+                    "or pass force=true to re-translate.")
+            return
+
+        _cprint("INFO", job.id,
+                f"Fetched {len(rows)} English horoscope rows → translating to "
+                f"{len(TARGET_LANGUAGES)} languages "
+                f"| batch_size={req.batch_size} rpm_limit={req.rpm_limit}")
+
+        total_batches = (len(rows) + req.batch_size - 1) // req.batch_size
+
+        for batch_num, i in enumerate(range(0, len(rows), req.batch_size), start=1):
+            batch = rows[i: i + req.batch_size]
+            ids = ", ".join(f"{r['sign']}/{r['period']}/{r['period_key']}" for r in batch)
+            _cprint("INFO", job.id,
+                    f"Batch {batch_num}/{total_batches} "
+                    f"({len(batch)} records) → translating ... "
+                    f"{_DIM}[{ids}]{_RESET}")
+
+            await limiter.acquire()
+            translated = await translate_horoscope_batch(batch, model=DEFAULT_MODEL)
+
+            if translated is None:
+                job.counters["errors"] += len(batch)
+                _cprint("ERROR", job.id,
+                        f"Batch {batch_num}/{total_batches} FAILED (LLM error) — skipping")
+                continue
+
+            job.counters["cleaned"] += len(translated)
+            _cprint("OK", job.id,
+                    f"Batch {batch_num}/{total_batches} translated ({len(translated)} horoscopes)")
+
+            if req.dry_run:
+                job.counters["skipped"] += len(batch)
+                _cprint("WARN", job.id,
+                        f"dry_run=true — batch {batch_num} NOT written to DB")
+                continue
+
+            conn = connect_rw()
+            written_this_batch = 0
+            try:
+                for row in batch:
+                    composite_key = f"{row['sign']}|{row['period']}|en|{row['period_key']}"
+                    lang_map: dict = translated.get(composite_key, {})
+                    if not lang_map:
+                        _cprint("WARN", job.id,
+                                f"LLM returned no translations for {composite_key!r} — skipping")
+                        continue
+
+                    for lang, c in lang_map.items():
+                        if not isinstance(c, dict) or not c:
+                            continue
+
+                        conn.execute(
+                            """
+                            INSERT INTO horoscope_predictions
+                                (sign, period, language, period_key, date_label,
+                                 prediction, love, career, finance, health, family, advice,
+                                 source_url, llm_cleaned_at)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                            ON CONFLICT (sign, period, language, period_key) DO UPDATE SET
+                                date_label  = COALESCE(excluded.date_label, horoscope_predictions.date_label),
+                                prediction  = excluded.prediction,
+                                love        = excluded.love,
+                                career      = excluded.career,
+                                finance     = excluded.finance,
+                                health      = excluded.health,
+                                family      = excluded.family,
+                                advice      = excluded.advice,
+                                llm_cleaned_at = NOW()
+                            """,
+                            (
+                                row["sign"], row["period"], lang, row["period_key"], row.get("date_label"),
+                                c.get("prediction"), c.get("love"), c.get("career"),
+                                c.get("finance"), c.get("health"), c.get("family"), c.get("advice"),
+                                row.get("source_url"),
+                            ),
+                        )
+                        written_this_batch += 1
+
+                conn.commit()
+                job.counters["written"] += written_this_batch
+                _cprint("OK", job.id,
+                        f"Batch {batch_num}/{total_batches} written "
+                        f"({written_this_batch} language rows committed)")
+            finally:
+                conn.close()
+
+    return _run
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -1194,6 +1325,27 @@ async def translate_muhurats(req: LLMCleanRequest):
         model=LLM_MODEL,
         dry_run=req.dry_run,
         runner=_make_muhurat_translate_runner(req),
+    )
+    return {"job_id": job.id, "status": job.status, **_job_summary(req)}
+
+
+@router.post("/translate/horoscope")
+async def translate_horoscope(req: LLMCleanRequest):
+    """
+    Translate cleaned English horoscope_predictions into all 11 non-English languages
+    (hi, bn, ta, te, mr, gu, kn, ml, pa, sa, or) in one LLM call per batch.
+
+    Prerequisites: run POST /clean/horoscope first so English rows exist.
+    Recommended batch_size: 2-3 (output is 11x larger than a clean call).
+    force=true re-translates horoscopes that already have non-English rows.
+    """
+    _check_llm()
+    from backend.config import LLM_MODEL
+    job = LLMJobManager.start(
+        category="horoscope-translate",
+        model=LLM_MODEL,
+        dry_run=req.dry_run,
+        runner=_make_horoscope_translate_runner(req),
     )
     return {"job_id": job.id, "status": job.status, **_job_summary(req)}
 
