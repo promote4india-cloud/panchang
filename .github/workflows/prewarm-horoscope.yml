@@ -1,0 +1,109 @@
+name: Prewarm horoscope (daily 1 AM IST)
+
+# 01:00 IST == 19:30 UTC the previous day (IST = UTC+5:30).
+# GitHub Actions cron runs in UTC and may be delayed a few minutes under load.
+on:
+  schedule:
+    - cron: "30 19 * * *"
+  workflow_dispatch:        # adds a "Run workflow" button for manual triggering
+    inputs:
+      periods:
+        description: "Comma-separated periods to pre-fetch"
+        default: "daily,weekly,monthly"
+        required: false
+      force:
+        description: "Re-fetch even if already cached (true/false)"
+        default: "false"
+        required: false
+
+# Don't let a slow run overlap with the next scheduled one.
+concurrency:
+  group: prewarm-horoscope
+  cancel-in-progress: false
+
+jobs:
+  prewarm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_URL: ${{ secrets.API_BASE_URL }}        # e.g. https://your-app.onrender.com
+      ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+      PERIODS: ${{ github.event.inputs.periods || 'daily,weekly,monthly' }}
+      FORCE: ${{ github.event.inputs.force || 'false' }}
+      POLL_TIMEOUT_SECONDS: "1500"                 # 25 min budget for scrape+clean+translate
+      POLL_INTERVAL_SECONDS: "20"
+    steps:
+      - name: Trigger prewarm and wait for completion
+        run: |
+          set -euo pipefail
+          auth="Authorization: Bearer ${ADMIN_API_KEY}"
+          jobs_url="${BASE_URL}/v1/admin/llm/jobs?limit=50"
+
+          # Tolerant GET — never aborts the script on a transient error (cold
+          # start, 502). Prints nothing on failure so callers can default.
+          get_jobs() { curl -sS --max-time 30 -H "${auth}" "${jobs_url}" 2>/dev/null || true; }
+
+          # 1) Baseline: id of the most recent horoscope-translate job BEFORE we
+          #    trigger, so we can recognise *this* run's job (uuid is unique).
+          before_id="$(get_jobs | jq -r '[.[] | select(.category=="horoscope-translate")][0].id // ""' 2>/dev/null || true)"
+          echo "Baseline translate job id: '${before_id:-<none>}'"
+
+          # 2) Trigger the pipeline. --retry handles Render cold-start: the first
+          #    attempt wakes a sleeping instance, a retry lands once it's up.
+          trigger_url="${BASE_URL}/v1/admin/scrape/horoscope?periods=${PERIODS}&language=en&auto_clean=true&auto_translate=true&force=${FORCE}"
+          echo "POST ${trigger_url}"
+          curl --fail-with-body --silent --show-error --request POST \
+               --header "${auth}" \
+               --retry 6 --retry-all-errors --retry-delay 20 \
+               --connect-timeout 30 --max-time 120 \
+               "${trigger_url}"
+          echo ""
+
+          # 3) Poll until a NEW horoscope-translate job (the final phase) reaches
+          #    a terminal state. Scrape -> clean -> translate runs sequentially,
+          #    so a finished translate job means the whole pipeline is done.
+          deadline=$(( $(date +%s) + POLL_TIMEOUT_SECONDS ))
+          while true; do
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Timed out after ${POLL_TIMEOUT_SECONDS}s waiting for the translate phase."
+              echo "The instance may have spun down mid-run (LLM jobs are in-process only)."
+              exit 1
+            fi
+
+            jobs="$(get_jobs)"
+            if [ -z "$jobs" ]; then
+              echo "jobs endpoint unreachable — retrying..."
+              sleep "${POLL_INTERVAL_SECONDS}"; continue
+            fi
+
+            cur="$(echo "$jobs" | jq -c '[.[] | select(.category=="horoscope-translate")][0] // empty')"
+            cur_id="$(echo "$cur" | jq -r '.id // ""')"
+            cur_status="$(echo "$cur" | jq -r '.status // ""')"
+
+            if [ -z "$cur" ] || [ "$cur_id" = "$before_id" ]; then
+              echo "Still scraping/cleaning (translate phase not started yet)..."
+              sleep "${POLL_INTERVAL_SECONDS}"; continue
+            fi
+            if [ "$cur_status" = "running" ]; then
+              written="$(echo "$cur" | jq -r '.counters.written // 0')"
+              echo "Translate job ${cur_id} running (written=${written})..."
+              sleep "${POLL_INTERVAL_SECONDS}"; continue
+            fi
+
+            # Terminal — report both phases.
+            echo "=== Clean phase ==="
+            echo "$jobs" | jq '[.[] | select(.category=="horoscope")][0] | {id,status,counters,note}'
+            echo "=== Translate phase ==="
+            echo "$cur" | jq '{id,status,counters,note}'
+
+            if [ "$cur_status" != "completed" ]; then
+              echo "::error::Translate job ended with status=${cur_status}."
+              exit 1
+            fi
+            errors="$(echo "$cur" | jq -r '.counters.errors // 0')"
+            if [ "$errors" -gt 0 ]; then
+              echo "::warning::Translate completed with ${errors} batch error(s) — some rows may be missing."
+            fi
+            echo "Prewarm pipeline completed successfully."
+            break
+          done
