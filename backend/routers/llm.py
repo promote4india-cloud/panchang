@@ -97,8 +97,8 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 
 class LLMCleanRequest(BaseModel):
-    batch_size: int = Field(10, ge=1, le=20, description="Records per API call")
-    rpm_limit: int = Field(30, ge=1, le=60, description="Max Groq calls per minute")
+    batch_size: int = Field(3, ge=1, le=20, description="Records per API call")
+    rpm_limit: int = Field(30, ge=1, le=60, description="Max LLM calls per minute")
     language: Optional[str] = Field(
         None,
         description="Filter by language code e.g. 'en', 'hi'. Leave empty for all.",

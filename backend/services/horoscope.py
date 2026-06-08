@@ -23,7 +23,9 @@ is the caller's responsibility (one request per language).
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from dataclasses import asdict
 from datetime import date as Date, datetime, timedelta
 from typing import Literal
@@ -36,6 +38,8 @@ from .scraper.parsers.horoscope import (
     ParsedSignDeepDive,
     parse_horoscope,
 )
+
+log = logging.getLogger("services.horoscope")
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -114,7 +118,8 @@ def current_period_key(period: Period, tz: str) -> str:
 
 _SELECT_COLS = (
     "sign, period, language, period_key, date_label, prediction, love, "
-    "career, finance, health, family, advice, ratings_json, source_url, scraped_at"
+    "career, finance, health, family, advice, ratings_json, source_url, "
+    "scraped_at, llm_cleaned_at"
 )
 
 
@@ -212,8 +217,152 @@ def _upsert_deepdive(d: ParsedSignDeepDive) -> None:
 
 
 # ---------------------------------------------------------------------------
+# On-demand clean + translate (single combined LLM call)
+# ---------------------------------------------------------------------------
+
+# Guards against firing duplicate clean+translate jobs for the same row while
+# one is already in flight, and keeps a strong reference to the background
+# tasks so they aren't garbage-collected mid-run. Both reset on process
+# restart, which is fine — the work is idempotent and re-triggers on the next
+# cache miss.
+_inflight_clean: set[tuple[str, str, str]] = set()
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _apply_clean_translate(en_row: dict, lang_map: dict[str, dict], key: str) -> None:
+    """
+    Write the result of a combined clean+translate call back to the DB:
+      - "en"  → UPDATE the existing raw row with cleaned text + llm_cleaned_at
+      - others → UPSERT a per-language row
+    """
+    sign, period = en_row["sign"], en_row["period"]
+    conn = connect_rw()
+    try:
+        for lang, fields in lang_map.items():
+            if not isinstance(fields, dict) or not fields:
+                continue
+
+            if lang == "en":
+                # COALESCE so a field the LLM omitted never nulls existing text.
+                conn.execute(
+                    """
+                    UPDATE horoscope_predictions SET
+                        prediction = COALESCE(%s, prediction),
+                        love       = COALESCE(%s, love),
+                        career     = COALESCE(%s, career),
+                        finance    = COALESCE(%s, finance),
+                        health     = COALESCE(%s, health),
+                        family     = COALESCE(%s, family),
+                        advice     = COALESCE(%s, advice),
+                        llm_cleaned_at = NOW()
+                    WHERE sign=%s AND period=%s AND language='en' AND period_key=%s
+                    """,
+                    (
+                        fields.get("prediction"), fields.get("love"), fields.get("career"),
+                        fields.get("finance"), fields.get("health"), fields.get("family"),
+                        fields.get("advice"),
+                        sign, period, key,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO horoscope_predictions
+                        (sign, period, language, period_key, date_label,
+                         prediction, love, career, finance, health, family, advice,
+                         source_url, llm_cleaned_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                    ON CONFLICT (sign, period, language, period_key) DO UPDATE SET
+                        date_label  = COALESCE(excluded.date_label, horoscope_predictions.date_label),
+                        prediction  = excluded.prediction,
+                        love        = excluded.love,
+                        career      = excluded.career,
+                        finance     = excluded.finance,
+                        health      = excluded.health,
+                        family      = excluded.family,
+                        advice      = excluded.advice,
+                        llm_cleaned_at = NOW()
+                    """,
+                    (
+                        sign, period, lang, key, en_row.get("date_label"),
+                        fields.get("prediction"), fields.get("love"), fields.get("career"),
+                        fields.get("finance"), fields.get("health"), fields.get("family"),
+                        fields.get("advice"),
+                        en_row.get("source_url"),
+                    ),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def _run_clean_translate(sign: str, period: Period, key: str, en_row: dict) -> None:
+    """Background worker: one combined clean+translate LLM call for a single
+    English row, then write all languages back. Never raises."""
+    try:
+        from .content_cleaner import clean_and_translate_horoscope_batch
+
+        result = await clean_and_translate_horoscope_batch([en_row])
+        if not result:
+            return  # LLM disabled or call failed — raw row stays; retried next miss
+        lang_map = result.get(f"{sign}|{period}|en|{key}")
+        if not lang_map:
+            log.warning("clean+translate: no entry for %s/%s/%s", sign, period, key)
+            return
+        _apply_clean_translate(en_row, lang_map, key)
+        log.info(
+            "clean+translate done for %s/%s/%s (%d languages)",
+            sign, period, key, len(lang_map),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("clean+translate failed for %s/%s/%s: %s", sign, period, key, exc)
+
+
+def _schedule_clean_translate(sign: str, period: Period, key: str, en_row: dict) -> None:
+    """
+    Fire-and-forget a combined clean+translate for one row. Cheap and safe:
+      - de-dupes via ``_inflight_clean`` so concurrent requests for the same
+        row don't stack jobs
+      - returns silently if called outside a running event loop
+    The user's request returns immediately; the cache self-upgrades to cleaned
+    English + 11 translations shortly after.
+    """
+    sig = (sign, period, key)
+    if sig in _inflight_clean:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # not in an async context — nothing to schedule onto
+
+    _inflight_clean.add(sig)
+    task = loop.create_task(_run_clean_translate(sign, period, key, en_row))
+    _bg_tasks.add(task)
+    task.add_done_callback(
+        lambda t: (_bg_tasks.discard(t), _inflight_clean.discard(sig))
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public service entry point
 # ---------------------------------------------------------------------------
+
+async def _scrape_en(sign: str, period: Period, key: str, *, force: bool) -> dict | None:
+    """Scrape the (English) astrosage page for this sign/period, upsert the raw
+    row (plus any deep-dive sections), and return the stored English row."""
+    url = build_url(sign, period)
+    html = await fetch_page(
+        url, scope="horoscope", ref_id=sign, language="en", force=force,
+    )
+    parsed = parse_horoscope(html, url, sign=sign, period=period, language="en")
+    _upsert(parsed, key)
+    # The daily page also carries sign-level evergreen sections; harvest
+    # them into zodiac_signs so /v1/reference/zodiac-signs/{id} has them
+    # without a second fetch.
+    if parsed.sign_deepdive is not None:
+        _upsert_deepdive(parsed.sign_deepdive)
+    return _select(sign, period, "en", key)
+
 
 async def get_horoscope(
     *,
@@ -225,10 +374,20 @@ async def get_horoscope(
     force: bool = False,
 ) -> dict | None:
     """
-    Return one horoscope row as a plain dict. Lazy-load from astrosage if
-    the (sign, period, language, period_key) combo isn't in DB AND the
-    period_key matches the current period in `tz`. Past/future periods
-    return None on miss so the caller can 404.
+    Return one horoscope row as a plain dict.
+
+    The astrosage source is English-only, so scraping ALWAYS targets the
+    English page. Cleaning + translation into the other 11 languages happens
+    via a single combined LLM call, kicked off in the background after the raw
+    row is stored — the request never blocks on the LLM.
+
+      - language == "en": serve cached, else (current period) scrape raw and
+        return immediately; a background clean+translate upgrades the cache.
+      - language != "en": serve cached translation if present; otherwise never
+        scrape a *mislabelled* translation — ensure the English source exists,
+        trigger the background pipeline, and fall back to the English row for
+        this request (the requested language appears on a later request).
+      - Past/future periods return None on miss so the caller can 404.
 
     `force=True` re-scrapes even if cached — useful for admin re-runs after
     parser improvements.
@@ -239,27 +398,38 @@ async def get_horoscope(
         raise ValueError(f"Unknown period: {period!r}")
 
     key = period_key(period, d)
+    is_current = key == current_period_key(period, tz)
 
     if not force:
         cached = _select(sign, period, language, key)
         if cached is not None:
+            # Self-heal: a raw English row whose background clean job never
+            # completed (e.g. an earlier spin-down) gets re-triggered on access.
+            if language == "en" and cached.get("llm_cleaned_at") is None and is_current:
+                _schedule_clean_translate(sign, period, key, cached)
             return cached
 
-    if not force and key != current_period_key(period, tz):
-        return None  # archive miss — caller should 404
+    # --- English path -----------------------------------------------------
+    if language == "en":
+        if not force and not is_current:
+            return None  # archive miss — caller should 404
+        en_row = await _scrape_en(sign, period, key, force=force)
+        if en_row is not None:
+            _schedule_clean_translate(sign, period, key, en_row)
+        return en_row
 
-    url = build_url(sign, period)
-    html = await fetch_page(
-        url, scope="horoscope", ref_id=sign, language=language, force=force,
-    )
-    parsed = parse_horoscope(html, url, sign=sign, period=period, language=language)
-    _upsert(parsed, key)
-    # The daily page also carries sign-level evergreen sections; harvest
-    # them into zodiac_signs so /v1/reference/zodiac-signs/{id} has them
-    # without a second fetch.
-    if parsed.sign_deepdive is not None:
-        _upsert_deepdive(parsed.sign_deepdive)
-    return _select(sign, period, language, key)
+    # --- Non-English path -------------------------------------------------
+    # No cached translation. Make sure we have an English source to translate
+    # from, then trigger the pipeline and fall back to English for this call.
+    en_row = _select(sign, period, "en", key)
+    if en_row is None:
+        if not is_current:
+            return None  # archive miss — nothing to scrape or translate
+        en_row = await _scrape_en(sign, period, key, force=force)
+    if en_row is None:
+        return None
+    _schedule_clean_translate(sign, period, key, en_row)
+    return en_row  # honest English fallback; translation arrives on a later request
 
 
 # ---------------------------------------------------------------------------

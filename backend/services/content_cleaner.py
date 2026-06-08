@@ -93,6 +93,41 @@ Return ONLY a JSON object in this exact structure:
 """
 
 
+_CLEAN_TRANSLATE_SYSTEM_PROMPT = """\
+You are a content editor AND professional translator specializing in Hindu festivals, \
+muhurats (auspicious timings), horoscopes, and Vedic astrology.
+
+You will receive a JSON object where each top-level key is a record ID and its value is an \
+object of English text fields (plain strings, lists of strings, or lists of [question, answer] \
+pairs) scraped from the web.
+
+Do TWO things for every record:
+  1. CLEAN the English: fix grammar, remove scraper artifacts (e.g. trailing "More", repeated \
+     text, broken sentences), improve clarity and flow. Keep cultural accuracy and meaning \
+     intact. Do NOT add new information and do NOT drop any factual detail.
+  2. TRANSLATE the cleaned English into these 11 languages:
+       hi (Hindi), bn (Bengali), ta (Tamil), te (Telugu), mr (Marathi),
+       gu (Gujarati), kn (Kannada), ml (Malayalam), pa (Punjabi), sa (Sanskrit), or (Odia)
+
+Rules:
+- Preserve the JSON structure exactly — same field names, same nesting, same list shapes
+- Festival/deity/Sanskrit proper nouns: render in the authentic native script
+- Keep the tone formal yet accessible, matching the cultural register of the input
+- Do NOT add or remove fields; do NOT add commentary outside the JSON
+
+Return ONLY a JSON object in this exact structure (note "en" holds the CLEANED English):
+{
+  "<record_id>": {
+    "en": { <cleaned English fields> },
+    "hi": { <translated to Hindi> },
+    "bn": { <Bengali> }, "ta": { <Tamil> }, "te": { <Telugu> }, "mr": { <Marathi> },
+    "gu": { <Gujarati> }, "kn": { <Kannada> }, "ml": { <Malayalam> },
+    "pa": { <Punjabi> }, "sa": { <Sanskrit> }, "or": { <Odia> }
+  }
+}\
+"""
+
+
 # ---------------------------------------------------------------------------
 # Low-level: one LLM call for a dict of prose fields
 # ---------------------------------------------------------------------------
@@ -355,6 +390,28 @@ async def translate_horoscope_batch(
     if not payload:
         return {}
     return await _call_llm(payload, model, system_prompt=_TRANSLATION_SYSTEM_PROMPT)
+
+
+async def clean_and_translate_horoscope_batch(
+    rows: list[dict],
+    *,
+    model: str = DEFAULT_MODEL,
+) -> dict[str, dict[str, dict]] | None:
+    """
+    Clean raw English horoscope rows AND translate them into all 11
+    target languages in a SINGLE LLM call.
+
+    Unlike the separate clean/translate batch functions (kept for the bulk
+    prewarm pipeline, where independent batch sizes matter), this is meant
+    for the on-demand single-row path: one round-trip, atomic result.
+
+    Returns {composite_key: {lang_code: {field: value}}} where lang_code
+    includes ``"en"`` (the *cleaned* English), or None on failure.
+    """
+    payload = _build_horoscope_payload(rows)
+    if not payload:
+        return {}
+    return await _call_llm(payload, model, system_prompt=_CLEAN_TRANSLATE_SYSTEM_PROMPT)
 
 
 # ---------------------------------------------------------------------------

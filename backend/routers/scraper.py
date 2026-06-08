@@ -282,7 +282,7 @@ async def _chain_after_crawl(
         print("[chain] LLM not configured — skipping clean/translate phases", flush=True)
         return
 
-    clean_req = LLMCleanRequest()                    # batch_size=10 is fine for cleaning
+    clean_req = LLMCleanRequest(batch_size=10)       # cleaning is light → bigger batches are fine
     translate_req = LLMCleanRequest(batch_size=3)    # 11 languages × 10 festivals = huge output
 
     if auto_clean:
@@ -487,13 +487,14 @@ async def _run_horoscope_prewarm(
         )
         return
 
-    req = LLMCleanRequest()
+    clean_req     = LLMCleanRequest(batch_size=10)       # cleaning is light → bigger batches are fine
+    translate_req = LLMCleanRequest(batch_size=3)        # 11 languages × 10 horoscopes = huge output
 
     if auto_clean:
         print("[horoscope-prewarm] Starting LLM clean/horoscope ...", flush=True)
         hj = LLMJobManager.start(
             category="horoscope", model=DEFAULT_MODEL, dry_run=False,
-            runner=_make_horoscope_runner(req),
+            runner=_make_horoscope_runner(clean_req),
         )
         if hj.task:
             await asyncio.shield(hj.task)
@@ -506,7 +507,7 @@ async def _run_horoscope_prewarm(
         print("[horoscope-prewarm] Starting LLM translate/horoscope ...", flush=True)
         tj = LLMJobManager.start(
             category="horoscope-translate", model=DEFAULT_MODEL, dry_run=False,
-            runner=_make_horoscope_translate_runner(req),
+            runner=_make_horoscope_translate_runner(translate_req),
         )
         if tj.task:
             await asyncio.shield(tj.task)
@@ -519,7 +520,7 @@ async def _run_horoscope_prewarm(
         print("[horoscope-prewarm] Starting LLM clean/sign-deepdive ...", flush=True)
         dj = LLMJobManager.start(
             category="sign-deepdive", model=DEFAULT_MODEL, dry_run=False,
-            runner=_make_deepdive_runner(req),
+            runner=_make_deepdive_runner(clean_req),
         )
         if dj.task:
             await asyncio.shield(dj.task)
